@@ -10,4 +10,5 @@ elevenlabs==2.5.0
 git+https://github.com/openai/whisper.git 
 fastapi==0.109.2
 uvicorn==0.27.1
-pydantic>=2.7.1 
+pydantic>=2.7.1
+openai==1.30.5 
