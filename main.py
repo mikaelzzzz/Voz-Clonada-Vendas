@@ -40,7 +40,7 @@ import tempfile
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-from elevenlabs import generate, save, set_api_key
+from elevenlabs.client import ElevenLabs
 import whisper
 from io import BytesIO
 from app.config import settings
@@ -102,7 +102,7 @@ Z_API_TOKEN = os.getenv("Z_API_TOKEN")
 Z_API_SECURITY_TOKEN = os.getenv("Z_API_SECURITY_TOKEN")
 
 # Configuração do ElevenLabs
-set_api_key(ELEVEN_API_KEY)
+eleven_client = ElevenLabs(api_key=ELEVEN_API_KEY)
 
 # Modelo Whisper para transcrição
 model = whisper.load_model("base")
@@ -417,7 +417,7 @@ def generate_audio_response(text):
     """
     Gera resposta em áudio usando ElevenLabs e retorna os bytes do áudio
     """
-    audio = generate(
+    audio = eleven_client.generate(
         text=text,
         voice=VOICE_ID,
         model="eleven_multilingual_v2"
@@ -429,7 +429,7 @@ def generate_audio_response(text):
     else:
         # Se o áudio não for bytes, salva temporariamente e lê os bytes
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio:
-            save(audio, temp_audio.name)
+            eleven_client.save(audio, temp_audio.name)
             with open(temp_audio.name, 'rb') as f:
                 audio_bytes = f.read()
             os.unlink(temp_audio.name)

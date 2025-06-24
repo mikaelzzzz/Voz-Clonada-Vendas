@@ -59,8 +59,9 @@ class QueueService:
             }
             zaia_response = await ZaiaService.send_message(message)
             
+            elevenlabs_service = ElevenLabsService()
             # 3. Geração do áudio de resposta
-            audio_response = await ElevenLabsService.generate_audio(zaia_response['message'])
+            audio_response = elevenlabs_service.generate_audio(zaia_response['message'])
             
             # 4. Envio da resposta
             await ZAPIService.send_audio(
