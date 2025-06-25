@@ -41,10 +41,6 @@ import cloudinary
 import cloudinary.uploader
 import cloudinary.api
 from elevenlabs.client import ElevenLabs
-import whisper
-from io import BytesIO
-from app.config import settings
-from app.routes.webhook_routes import webhook_bp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -103,9 +99,6 @@ Z_API_SECURITY_TOKEN = os.getenv("Z_API_SECURITY_TOKEN")
 
 # Configuração do ElevenLabs
 eleven_client = ElevenLabs(api_key=ELEVEN_API_KEY)
-
-# Modelo Whisper para transcrição
-model = whisper.load_model("base")
 
 if not all([ELEVEN_API_KEY, VOICE_ID, ZAIA_API_KEY, ZAIA_AGENT_ID, Z_API_ID, Z_API_TOKEN, Z_API_SECURITY_TOKEN]):
     raise ValueError("Missing required environment variables. Check .env file.")
