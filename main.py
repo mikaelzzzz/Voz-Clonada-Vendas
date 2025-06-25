@@ -35,7 +35,6 @@ import aiohttp
 from flask import Flask, request, jsonify, send_from_directory
 import requests
 from dotenv import load_dotenv
-from openai import OpenAI
 import tempfile
 import cloudinary
 import cloudinary.uploader
@@ -80,8 +79,6 @@ ZAIA_API_URL = "https://core-service.zaia.app/v1.1/api/message-cross-channel/cre
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise ValueError("Missing OPENAI_API_KEY environment variable")
-
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Public URL Configuration
 PUBLIC_URL = os.getenv("PUBLIC_URL")
