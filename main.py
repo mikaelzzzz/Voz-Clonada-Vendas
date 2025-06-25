@@ -32,7 +32,9 @@ import logging
 from pathlib import Path
 import json
 import aiohttp
-from flask import Flask, request, jsonify, send_from_directory
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 import requests
 from dotenv import load_dotenv
 import tempfile
@@ -41,7 +43,7 @@ import cloudinary.uploader
 import cloudinary.api
 from elevenlabs.client import ElevenLabs
 from app.config import settings
-from app.routes.webhook_routes import webhook_bp
+from app.routes.webhook_routes import router as webhook_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,201 +52,129 @@ logger = logging.getLogger(__name__)
 # Load .env if present
 load_dotenv()
 
-def create_app():
+app = FastAPI()
+
+# CORS Middleware (opcional, mas recomendado para APIs)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Configuração do Cloudinary
+cloudinary.config(**settings.CLOUDINARY_CONFIG)
+
+# Register routers
+app.include_router(webhook_router, prefix="/webhook")
+
+# Variáveis globais
+AUDIO_DIR = Path("audio_files")
+AUDIO_DIR.mkdir(exist_ok=True)
+SAVE_AUDIO = os.getenv("SAVE_AUDIO", "false").lower() == "true"
+PUBLIC_URL = os.getenv("PUBLIC_URL")
+if not PUBLIC_URL:
+    raise ValueError("Missing PUBLIC_URL environment variable")
+
+@app.get("/")
+async def healthcheck():
+    return {"status": "ok"}
+
+@app.post("/tts")
+async def text_to_speech(request: Request):
+    try:
+        data = await request.json()
+        text = data.get("text", "")
+        if not text and "messages" in data:
+            text = " ".join(data["messages"])
+        if not text:
+            raise HTTPException(status_code=400, detail="No text provided")
+        audio_content = generate_audio(text)
+        if SAVE_AUDIO:
+            filename = f"tmp/audio_{uuid.uuid4()}.mp3"
+            with open(filename, "wb") as f:
+                f.write(audio_content)
+        audio_base64 = base64.b64encode(audio_content).decode()
+        return {"audioBase64": audio_base64, "mime": "audio/mpeg"}
+    except Exception as e:
+        logger.error(f"Error in /tts: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/audio/{filename}")
+async def serve_audio(filename: str):
+    file_path = AUDIO_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(file_path)
+
+# Funções auxiliares (mantidas fora do app)
+def generate_audio(text: str) -> bytes:
     """
-    Cria e configura a aplicação Flask
+    Generate audio using ElevenLabs API, optimized for Brazilian Portuguese.
+    
+    Args:
+        text: Text to convert to speech (in Portuguese)
+    Returns:
+        bytes: MP3 audio content
     """
-    app = Flask(__name__)
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
     
-    # Configuração do Cloudinary
-    cloudinary.config(**settings.CLOUDINARY_CONFIG)
+    headers = {
+        "Accept": "audio/mpeg",
+        "Content-Type": "application/json",
+        "xi-api-key": ELEVEN_API_KEY
+    }
+
+    # Configurações otimizadas para português brasileiro
+    data = {
+        "text": text,
+        "model_id": MODEL_ID,
+        "voice_settings": {
+            "stability": STABILITY,
+            "similarity_boost": SIMILARITY,
+            "style": 0.35,               # Adiciona mais expressividade natural
+            "use_speaker_boost": True    # Melhora a clareza da voz
+        },
+        "optimize_streaming_latency": 0,  # Prioriza qualidade sobre velocidade
+        "voice_language": "pt-BR",       # Força idioma português brasileiro
+        "language_id": "pt-BR"           # Força idioma português brasileiro
+    }
+
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        
+        if response.status_code != 200:
+            logger.error(f"ElevenLabs API error: {response.text}")
+            raise Exception(f"ElevenLabs API error: {response.text}")
+            
+        return response.content
+        
+    except Exception as e:
+        logger.error(f"Error generating audio: {str(e)}")
+        raise
+
+def generate_audio_response(text):
+    """
+    Gera resposta em áudio usando ElevenLabs e retorna os bytes do áudio
+    """
+    audio = eleven_client.generate(
+        text=text,
+        voice=VOICE_ID,
+        model="eleven_multilingual_v2"
+    )
     
-    # Registra as rotas
-    app.register_blueprint(webhook_bp, url_prefix='/webhook')
-    
-    @app.route("/", methods=["GET"])
-    def healthcheck():
-        """Health check endpoint."""
-        return jsonify({"status": "ok"})
-
-    @app.route("/tts", methods=["POST"])
-    def text_to_speech():
-        """Generate audio from text using ElevenLabs."""
-        try:
-            data = request.get_json()
-            
-            if not data:
-                return jsonify({"error": "No JSON data received"}), 400
-            
-            # Handle single text or array of messages
-            text = data.get("text", "")
-            if not text and "messages" in data:
-                text = " ".join(data["messages"])
-            
-            if not text:
-                return jsonify({"error": "No text provided"}), 400
-            
-            # Generate audio
-            audio_content = generate_audio(text)
-            
-            # Save file if enabled
-            if SAVE_AUDIO:
-                filename = f"tmp/audio_{uuid.uuid4()}.mp3"
-                with open(filename, "wb") as f:
-                    f.write(audio_content)
-                
-            # Convert to base64
-            audio_base64 = base64.b64encode(audio_content).decode()
-            
-            return jsonify({
-                "audioBase64": audio_base64,
-                "mime": "audio/mpeg"
-            })
-            
-        except Exception as e:
-            logger.error(f"Error in /tts: {str(e)}")
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/audio/<filename>")
-    def serve_audio(filename):
-        """Serve audio files from audio_files directory."""
-        return send_from_directory(AUDIO_DIR, filename)
-
-    @app.route("/webhook", methods=["POST"])
-    async def webhook_zaia():
-        """Handle incoming messages from Zaia webhook."""
-        try:
-            payload = request.get_json()
-            
-            if not payload:
-                return jsonify({"error": "No data received"}), 400
-
-            # Extrai informações da mensagem
-            channel = payload.get("channel")
-            chat_id = payload.get("externalGenerativeChatId")
-            phone = payload.get("whatsAppPhoneNumber")
-            recipient_id = payload.get("externalRecipientId")
-            message_type = payload.get("type", "text")
-            
-            # Parâmetros específicos do canal
-            channel_params = {}
-            if channel in ["whatsapp", "whatsapp_business"]:
-                if phone:
-                    channel_params["whatsAppPhoneNumber"] = phone
-                if chat_id:
-                    channel_params["externalGenerativeChatId"] = chat_id
-            elif channel == "instagram":
-                if recipient_id:
-                    channel_params["externalRecipientId"] = recipient_id
-                if chat_id:
-                    channel_params["externalGenerativeChatId"] = chat_id
-            elif channel in ["widget", "api"]:
-                if chat_id:
-                    channel_params["externalGenerativeChatId"] = chat_id
-
-            # Processa a mensagem de acordo com o tipo
-            if message_type == "text":
-                texto = payload.get("text", "")
-                if texto:
-                    # Para mensagens de texto, responde com texto
-                    await enviar_mensagem_zaia(
-                        channel=channel,
-                        message=texto,  # Envia o texto diretamente
-                        **channel_params
-                    )
-                
-            elif message_type == "audio":
-                audio_url = payload.get("audioUrl")
-                if audio_url:
-                    try:
-                        # Download do áudio
-                        audio_path = await download_audio(audio_url)
-                        
-                        # Transcreve o áudio para texto usando Whisper
-                        texto_transcrito = await transcribe_audio(audio_path)
-                        logger.info(f"Áudio transcrito: {texto_transcrito}")
-                        
-                        # Gera resposta em áudio usando a voz clonada
-                        audio_bytes = generate_audio_response(texto_transcrito)
-                        logger.info(f"Áudio enviado para Cloudinary: {audio_url}")
-                        
-                        # Envia resposta em áudio
-                        await enviar_mensagem_zaia(
-                            channel=channel,
-                            audio_url=audio_url,
-                            **channel_params
-                        )
-                    except Exception as e:
-                        logger.error(f"Erro ao processar áudio: {str(e)}")
-                        # Em caso de erro, envia mensagem de texto explicando
-                        await enviar_mensagem_zaia(
-                            channel=channel,
-                            message="Desculpe, tive um problema ao processar seu áudio. Pode tentar novamente?",
-                            **channel_params
-                        )
-            
-            return jsonify({"status": "ok"})
-            
-        except Exception as e:
-            logger.error(f"Error in webhook: {str(e)}")
-            return jsonify({"error": str(e)}), 500
-
-    @app.route('/webhook/z-api', methods=['POST'])
-    async def z_api_webhook():
-        """
-        Webhook para receber mensagens da Z-API
-        """
-        try:
-            data = request.json
-            
-            # Verifica se é uma mensagem
-            if 'messages' in data:
-                message = data['messages'][0]
-                phone = message['from']
-                
-                # Processa áudio se for mensagem de áudio
-                if message['type'] == 'audio':
-                    text = process_audio_message(message['audio']['url'])
-                    message['transcript'] = text
-                
-                # Envia para Zaia
-                zaia_response = await send_to_zaia(message)
-                
-                # Gera resposta em áudio se a mensagem original era áudio
-                if message['type'] == 'audio':
-                    audio_bytes = generate_audio_response(zaia_response['message'])
-                    await send_audio_via_z_api(phone, audio_bytes)
-                else:
-                    await send_text_via_z_api(phone, zaia_response['message'])
-                
-                return jsonify({"status": "success"})
-            
-            # Verifica se é uma notificação de status
-            elif 'status' in data:
-                # Processa status da mensagem (entregue, lida, etc)
-                logger.info(f"Status update: {data['status']}")
-                return jsonify({"status": "success"})
-            
-            # Verifica se é uma notificação de desconexão
-            elif 'connected' in data and not data['connected']:
-                # Processa desconexão
-                logger.info("Z-API disconnected")
-                return jsonify({"status": "success"})
-            
-            return jsonify({"status": "unknown_event"})
-            
-        except Exception as e:
-            logger.error(f"Error processing webhook: {str(e)}")
-            return jsonify({"status": "error", "message": str(e)}), 500
-
-    @app.route('/health', methods=['GET'])
-    def health_check():
-        """
-        Endpoint para verificar se o servidor está funcionando
-        """
-        return jsonify({"status": "healthy"})
-
-    return app
+    # Converte o áudio para bytes
+    if isinstance(audio, bytes):
+        return audio
+    else:
+        # Se o áudio não for bytes, salva temporariamente e lê os bytes
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio:
+            eleven_client.save(audio, temp_audio.name)
+            with open(temp_audio.name, 'rb') as f:
+                audio_bytes = f.read()
+            os.unlink(temp_audio.name)
+            return audio_bytes
 
 # Environment variables
 ELEVEN_API_KEY = os.getenv("ELEVENLABS_API_KEY")
@@ -252,7 +182,6 @@ VOICE_ID = os.getenv("VOICE_ID")
 MODEL_ID = os.getenv("MODEL_ID", "eleven_multilingual_v2")
 STABILITY = float(os.getenv("STABILITY", "0.5"))
 SIMILARITY = float(os.getenv("SIMILARITY", "0.8"))
-SAVE_AUDIO = os.getenv("SAVE_AUDIO", "false").lower() == "true"
 
 # Zaia Configuration
 ZAIA_API_KEY = os.getenv("ZAIA_API_KEY")
@@ -263,15 +192,6 @@ ZAIA_API_URL = "https://core-service.zaia.app/v1.1/api/message-cross-channel/cre
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise ValueError("Missing OPENAI_API_KEY environment variable")
-
-# Public URL Configuration
-PUBLIC_URL = os.getenv("PUBLIC_URL")
-if not PUBLIC_URL:
-    raise ValueError("Missing PUBLIC_URL environment variable")
-
-# Ensure audio directory exists
-AUDIO_DIR = Path("audio_files")
-AUDIO_DIR.mkdir(exist_ok=True)
 
 # Z-API Configuration
 Z_API_ID = os.getenv("Z_API_ID")
@@ -339,51 +259,6 @@ async def enviar_mensagem_zaia(channel: str, message: str = None, audio_url: str
         except Exception as e:
             logger.error(f"Exceção ao enviar mensagem: {str(e)}")
             return {"error": str(e)}
-
-def generate_audio(text: str) -> bytes:
-    """
-    Generate audio using ElevenLabs API, optimized for Brazilian Portuguese.
-    
-    Args:
-        text: Text to convert to speech (in Portuguese)
-    Returns:
-        bytes: MP3 audio content
-    """
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}"
-    
-    headers = {
-        "Accept": "audio/mpeg",
-        "Content-Type": "application/json",
-        "xi-api-key": ELEVEN_API_KEY
-    }
-
-    # Configurações otimizadas para português brasileiro
-    data = {
-        "text": text,
-        "model_id": MODEL_ID,
-        "voice_settings": {
-            "stability": STABILITY,
-            "similarity_boost": SIMILARITY,
-            "style": 0.35,               # Adiciona mais expressividade natural
-            "use_speaker_boost": True    # Melhora a clareza da voz
-        },
-        "optimize_streaming_latency": 0,  # Prioriza qualidade sobre velocidade
-        "voice_language": "pt-BR",       # Força idioma português brasileiro
-        "language_id": "pt-BR"           # Força idioma português brasileiro
-    }
-
-    try:
-        response = requests.post(url, json=data, headers=headers)
-        
-        if response.status_code != 200:
-            logger.error(f"ElevenLabs API error: {response.text}")
-            raise Exception(f"ElevenLabs API error: {response.text}")
-            
-        return response.content
-        
-    except Exception as e:
-        logger.error(f"Error generating audio: {str(e)}")
-        raise
 
 async def download_audio(url: str) -> str:
     """
@@ -587,30 +462,7 @@ def process_audio_message(audio_url):
     
     return result["text"]
 
-def generate_audio_response(text):
-    """
-    Gera resposta em áudio usando ElevenLabs e retorna os bytes do áudio
-    """
-    audio = eleven_client.generate(
-        text=text,
-        voice=VOICE_ID,
-        model="eleven_multilingual_v2"
-    )
-    
-    # Converte o áudio para bytes
-    if isinstance(audio, bytes):
-        return audio
-    else:
-        # Se o áudio não for bytes, salva temporariamente e lê os bytes
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio:
-            eleven_client.save(audio, temp_audio.name)
-            with open(temp_audio.name, 'rb') as f:
-                audio_bytes = f.read()
-            os.unlink(temp_audio.name)
-            return audio_bytes
-
-app = create_app()
-
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 3000))
-    app.run(host="0.0.0.0", port=port) 
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=port) 

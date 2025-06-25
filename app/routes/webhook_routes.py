@@ -1,5 +1,6 @@
 import logging
-from flask import Blueprint, request, jsonify
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
 from app.services.z_api_service import ZAPIService
 from app.services.zaia_service import ZaiaService
 from app.services.elevenlabs_service import ElevenLabsService
@@ -8,17 +9,16 @@ from app.services.queue_service import queue_service
 
 logger = logging.getLogger(__name__)
 
-# Cria o blueprint para as rotas
-webhook_bp = Blueprint('webhook', __name__)
+router = APIRouter()
 
 # Instancia os serviços
 elevenlabs_service = ElevenLabsService()
 whisper_service = WhisperService()
 
-@webhook_bp.route('/webhook', methods=['POST'])
-async def handle_webhook():
+@router.post("")
+async def handle_webhook(request: Request):
     try:
-        data = request.get_json()
+        data = await request.json()
         logger.info(f"Webhook recebido: {data}")
 
         # Verifica se é uma mensagem de áudio
@@ -32,10 +32,10 @@ async def handle_webhook():
                 message="Recebi seu áudio! Estou processando e já te respondo..."
             )
             
-            return jsonify({
+            return JSONResponse({
                 "status": "processing",
                 "message": "Audio message queued for processing"
-            }), 200
+            })
 
         # Verifica se é uma mensagem
         if 'messages' in data:
@@ -57,32 +57,32 @@ async def handle_webhook():
             else:
                 await ZAPIService.send_text(phone, zaia_response['message'])
             
-            return jsonify({"status": "success"})
+            return JSONResponse({"status": "success"})
         
         # Verifica se é uma notificação de status
         elif 'status' in data:
             # Processa status da mensagem (entregue, lida, etc)
             logger.info(f"Status update: {data['status']}")
-            return jsonify({"status": "success"})
+            return JSONResponse({"status": "success"})
         
         # Verifica se é uma notificação de desconexão
         elif 'connected' in data and not data['connected']:
             # Processa desconexão
             logger.info("Z-API disconnected")
-            return jsonify({"status": "success"})
+            return JSONResponse({"status": "success"})
             
-        return jsonify({"status": "unknown_event"})
+        return JSONResponse({"status": "unknown_event"})
         
     except Exception as e:
         logger.error(f"Erro ao processar webhook: {str(e)}")
-        return jsonify({
+        return JSONResponse({
             "status": "error",
             "message": str(e)
-        }), 500
+        }, status_code=500)
 
-@webhook_bp.route('/health', methods=['GET'])
+@router.get("/health")
 def health_check():
     """
     Endpoint para verificar se o servidor está funcionando
     """
-    return jsonify({"status": "healthy"}) 
+    return {"status": "healthy"} 

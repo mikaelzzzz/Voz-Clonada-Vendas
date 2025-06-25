@@ -10,7 +10,7 @@ class WhisperService:
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
 
-    def transcribe_audio(self, audio_url: str) -> str:
+    async def transcribe_audio(self, audio_url: str) -> str:
         """
         Processa mensagem de áudio: baixa, transcreve usando OpenAI Whisper API e retorna o texto
         """

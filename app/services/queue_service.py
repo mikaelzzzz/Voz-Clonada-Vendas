@@ -50,7 +50,7 @@ class QueueService:
             
             # 1. Transcrição do áudio
             audio_url = task_data['audio']['url']
-            transcript = await WhisperService.transcribe_audio(audio_url)
+            transcript = await WhisperService().transcribe_audio(audio_url)
             
             # 2. Processamento na Zaia
             message = {
