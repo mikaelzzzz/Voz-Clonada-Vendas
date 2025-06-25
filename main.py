@@ -60,6 +60,188 @@ def create_app():
     # Registra as rotas
     app.register_blueprint(webhook_bp, url_prefix='/webhook')
     
+    @app.route("/", methods=["GET"])
+    def healthcheck():
+        """Health check endpoint."""
+        return jsonify({"status": "ok"})
+
+    @app.route("/tts", methods=["POST"])
+    def text_to_speech():
+        """Generate audio from text using ElevenLabs."""
+        try:
+            data = request.get_json()
+            
+            if not data:
+                return jsonify({"error": "No JSON data received"}), 400
+            
+            # Handle single text or array of messages
+            text = data.get("text", "")
+            if not text and "messages" in data:
+                text = " ".join(data["messages"])
+            
+            if not text:
+                return jsonify({"error": "No text provided"}), 400
+            
+            # Generate audio
+            audio_content = generate_audio(text)
+            
+            # Save file if enabled
+            if SAVE_AUDIO:
+                filename = f"tmp/audio_{uuid.uuid4()}.mp3"
+                with open(filename, "wb") as f:
+                    f.write(audio_content)
+                
+            # Convert to base64
+            audio_base64 = base64.b64encode(audio_content).decode()
+            
+            return jsonify({
+                "audioBase64": audio_base64,
+                "mime": "audio/mpeg"
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in /tts: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/audio/<filename>")
+    def serve_audio(filename):
+        """Serve audio files from audio_files directory."""
+        return send_from_directory(AUDIO_DIR, filename)
+
+    @app.route("/webhook", methods=["POST"])
+    async def webhook_zaia():
+        """Handle incoming messages from Zaia webhook."""
+        try:
+            payload = request.get_json()
+            
+            if not payload:
+                return jsonify({"error": "No data received"}), 400
+
+            # Extrai informações da mensagem
+            channel = payload.get("channel")
+            chat_id = payload.get("externalGenerativeChatId")
+            phone = payload.get("whatsAppPhoneNumber")
+            recipient_id = payload.get("externalRecipientId")
+            message_type = payload.get("type", "text")
+            
+            # Parâmetros específicos do canal
+            channel_params = {}
+            if channel in ["whatsapp", "whatsapp_business"]:
+                if phone:
+                    channel_params["whatsAppPhoneNumber"] = phone
+                if chat_id:
+                    channel_params["externalGenerativeChatId"] = chat_id
+            elif channel == "instagram":
+                if recipient_id:
+                    channel_params["externalRecipientId"] = recipient_id
+                if chat_id:
+                    channel_params["externalGenerativeChatId"] = chat_id
+            elif channel in ["widget", "api"]:
+                if chat_id:
+                    channel_params["externalGenerativeChatId"] = chat_id
+
+            # Processa a mensagem de acordo com o tipo
+            if message_type == "text":
+                texto = payload.get("text", "")
+                if texto:
+                    # Para mensagens de texto, responde com texto
+                    await enviar_mensagem_zaia(
+                        channel=channel,
+                        message=texto,  # Envia o texto diretamente
+                        **channel_params
+                    )
+                
+            elif message_type == "audio":
+                audio_url = payload.get("audioUrl")
+                if audio_url:
+                    try:
+                        # Download do áudio
+                        audio_path = await download_audio(audio_url)
+                        
+                        # Transcreve o áudio para texto usando Whisper
+                        texto_transcrito = await transcribe_audio(audio_path)
+                        logger.info(f"Áudio transcrito: {texto_transcrito}")
+                        
+                        # Gera resposta em áudio usando a voz clonada
+                        audio_bytes = generate_audio_response(texto_transcrito)
+                        logger.info(f"Áudio enviado para Cloudinary: {audio_url}")
+                        
+                        # Envia resposta em áudio
+                        await enviar_mensagem_zaia(
+                            channel=channel,
+                            audio_url=audio_url,
+                            **channel_params
+                        )
+                    except Exception as e:
+                        logger.error(f"Erro ao processar áudio: {str(e)}")
+                        # Em caso de erro, envia mensagem de texto explicando
+                        await enviar_mensagem_zaia(
+                            channel=channel,
+                            message="Desculpe, tive um problema ao processar seu áudio. Pode tentar novamente?",
+                            **channel_params
+                        )
+            
+            return jsonify({"status": "ok"})
+            
+        except Exception as e:
+            logger.error(f"Error in webhook: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/webhook/z-api', methods=['POST'])
+    async def z_api_webhook():
+        """
+        Webhook para receber mensagens da Z-API
+        """
+        try:
+            data = request.json
+            
+            # Verifica se é uma mensagem
+            if 'messages' in data:
+                message = data['messages'][0]
+                phone = message['from']
+                
+                # Processa áudio se for mensagem de áudio
+                if message['type'] == 'audio':
+                    text = process_audio_message(message['audio']['url'])
+                    message['transcript'] = text
+                
+                # Envia para Zaia
+                zaia_response = await send_to_zaia(message)
+                
+                # Gera resposta em áudio se a mensagem original era áudio
+                if message['type'] == 'audio':
+                    audio_bytes = generate_audio_response(zaia_response['message'])
+                    await send_audio_via_z_api(phone, audio_bytes)
+                else:
+                    await send_text_via_z_api(phone, zaia_response['message'])
+                
+                return jsonify({"status": "success"})
+            
+            # Verifica se é uma notificação de status
+            elif 'status' in data:
+                # Processa status da mensagem (entregue, lida, etc)
+                logger.info(f"Status update: {data['status']}")
+                return jsonify({"status": "success"})
+            
+            # Verifica se é uma notificação de desconexão
+            elif 'connected' in data and not data['connected']:
+                # Processa desconexão
+                logger.info("Z-API disconnected")
+                return jsonify({"status": "success"})
+            
+            return jsonify({"status": "unknown_event"})
+            
+        except Exception as e:
+            logger.error(f"Error processing webhook: {str(e)}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        """
+        Endpoint para verificar se o servidor está funcionando
+        """
+        return jsonify({"status": "healthy"})
+
     return app
 
 # Environment variables
@@ -425,208 +607,8 @@ def generate_audio_response(text):
             os.unlink(temp_audio.name)
             return audio_bytes
 
-@app.route("/", methods=["GET"])
-def healthcheck():
-    """Health check endpoint."""
-    return jsonify({"status": "ok"})
-
-@app.route("/tts", methods=["POST"])
-def text_to_speech():
-    """Generate audio from text using ElevenLabs."""
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No JSON data received"}), 400
-            
-        # Handle single text or array of messages
-        text = data.get("text", "")
-        if not text and "messages" in data:
-            text = " ".join(data["messages"])
-            
-        if not text:
-            return jsonify({"error": "No text provided"}), 400
-            
-        # Generate audio
-        audio_content = generate_audio(text)
-        
-        # Save file if enabled
-        if SAVE_AUDIO:
-            filename = f"tmp/audio_{uuid.uuid4()}.mp3"
-            with open(filename, "wb") as f:
-                f.write(audio_content)
-                
-        # Convert to base64
-        audio_base64 = base64.b64encode(audio_content).decode()
-        
-        return jsonify({
-            "audioBase64": audio_base64,
-            "mime": "audio/mpeg"
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in /tts: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/audio/<filename>")
-def serve_audio(filename):
-    """Serve audio files from audio_files directory."""
-    return send_from_directory(AUDIO_DIR, filename)
-
-def save_audio_file(audio_content: bytes) -> str:
-    """
-    Save audio content to file and return public URL.
-    
-    Args:
-        audio_content: Audio file content in bytes
-    Returns:
-        str: Public URL for the audio file
-    """
-    filename = f"audio_{uuid.uuid4()}.mp3"
-    filepath = AUDIO_DIR / filename
-    
-    with open(filepath, "wb") as f:
-        f.write(audio_content)
-        
-    return f"{PUBLIC_URL}/audio/{filename}"
-
-@app.route("/webhook", methods=["POST"])
-async def webhook_zaia():
-    """Handle incoming messages from Zaia webhook."""
-    try:
-        payload = request.get_json()
-        
-        if not payload:
-            return jsonify({"error": "No data received"}), 400
-
-        # Extrai informações da mensagem
-        channel = payload.get("channel")
-        chat_id = payload.get("externalGenerativeChatId")
-        phone = payload.get("whatsAppPhoneNumber")
-        recipient_id = payload.get("externalRecipientId")
-        message_type = payload.get("type", "text")
-        
-        # Parâmetros específicos do canal
-        channel_params = {}
-        if channel in ["whatsapp", "whatsapp_business"]:
-            if phone:
-                channel_params["whatsAppPhoneNumber"] = phone
-            if chat_id:
-                channel_params["externalGenerativeChatId"] = chat_id
-        elif channel == "instagram":
-            if recipient_id:
-                channel_params["externalRecipientId"] = recipient_id
-            if chat_id:
-                channel_params["externalGenerativeChatId"] = chat_id
-        elif channel in ["widget", "api"]:
-            if chat_id:
-                channel_params["externalGenerativeChatId"] = chat_id
-
-        # Processa a mensagem de acordo com o tipo
-        if message_type == "text":
-            texto = payload.get("text", "")
-            if texto:
-                # Para mensagens de texto, responde com texto
-                await enviar_mensagem_zaia(
-                    channel=channel,
-                    message=texto,  # Envia o texto diretamente
-                    **channel_params
-                )
-                
-        elif message_type == "audio":
-            audio_url = payload.get("audioUrl")
-            if audio_url:
-                try:
-                    # Download do áudio
-                    audio_path = await download_audio(audio_url)
-                    
-                    # Transcreve o áudio para texto usando Whisper
-                    texto_transcrito = await transcribe_audio(audio_path)
-                    logger.info(f"Áudio transcrito: {texto_transcrito}")
-                    
-                    # Gera resposta em áudio usando a voz clonada
-                    audio_bytes = generate_audio_response(texto_transcrito)
-                    logger.info(f"Áudio enviado para Cloudinary: {audio_url}")
-                    
-                    # Envia resposta em áudio
-                    await enviar_mensagem_zaia(
-                        channel=channel,
-                        audio_url=audio_url,
-                        **channel_params
-                    )
-                except Exception as e:
-                    logger.error(f"Erro ao processar áudio: {str(e)}")
-                    # Em caso de erro, envia mensagem de texto explicando
-                    await enviar_mensagem_zaia(
-                        channel=channel,
-                        message="Desculpe, tive um problema ao processar seu áudio. Pode tentar novamente?",
-                        **channel_params
-                    )
-        
-        return jsonify({"status": "ok"})
-        
-    except Exception as e:
-        logger.error(f"Error in webhook: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/webhook/z-api', methods=['POST'])
-async def z_api_webhook():
-    """
-    Webhook para receber mensagens da Z-API
-    """
-    try:
-        data = request.json
-        
-        # Verifica se é uma mensagem
-        if 'messages' in data:
-            message = data['messages'][0]
-            phone = message['from']
-            
-            # Processa áudio se for mensagem de áudio
-            if message['type'] == 'audio':
-                text = process_audio_message(message['audio']['url'])
-                message['transcript'] = text
-            
-            # Envia para Zaia
-            zaia_response = await send_to_zaia(message)
-            
-            # Gera resposta em áudio se a mensagem original era áudio
-            if message['type'] == 'audio':
-                audio_bytes = generate_audio_response(zaia_response['message'])
-                await send_audio_via_z_api(phone, audio_bytes)
-            else:
-                await send_text_via_z_api(phone, zaia_response['message'])
-            
-            return jsonify({"status": "success"})
-        
-        # Verifica se é uma notificação de status
-        elif 'status' in data:
-            # Processa status da mensagem (entregue, lida, etc)
-            logger.info(f"Status update: {data['status']}")
-            return jsonify({"status": "success"})
-        
-        # Verifica se é uma notificação de desconexão
-        elif 'connected' in data and not data['connected']:
-            # Processa desconexão
-            logger.info("Z-API disconnected")
-            return jsonify({"status": "success"})
-            
-        return jsonify({"status": "unknown_event"})
-        
-    except Exception as e:
-        logger.error(f"Error processing webhook: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """
-    Endpoint para verificar se o servidor está funcionando
-    """
-    return jsonify({"status": "healthy"})
+app = create_app()
 
 if __name__ == "__main__":
-    app = create_app()
     port = int(os.getenv("PORT", 3000))
-    app.run(host="0.0.0.0", port=port)
-
-app = create_app() 
+    app.run(host="0.0.0.0", port=port) 
