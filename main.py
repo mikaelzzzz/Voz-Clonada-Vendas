@@ -425,12 +425,12 @@ def generate_audio_response(text):
             os.unlink(temp_audio.name)
             return audio_bytes
 
-@APP.route("/", methods=["GET"])
+@app.route("/", methods=["GET"])
 def healthcheck():
     """Health check endpoint."""
     return jsonify({"status": "ok"})
 
-@APP.route("/tts", methods=["POST"])
+@app.route("/tts", methods=["POST"])
 def text_to_speech():
     """Generate audio from text using ElevenLabs."""
     try:
@@ -468,7 +468,7 @@ def text_to_speech():
         logger.error(f"Error in /tts: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@APP.route("/audio/<filename>")
+@app.route("/audio/<filename>")
 def serve_audio(filename):
     """Serve audio files from audio_files directory."""
     return send_from_directory(AUDIO_DIR, filename)
@@ -490,7 +490,7 @@ def save_audio_file(audio_content: bytes) -> str:
         
     return f"{PUBLIC_URL}/audio/{filename}"
 
-@APP.route("/webhook", methods=["POST"])
+@app.route("/webhook", methods=["POST"])
 async def webhook_zaia():
     """Handle incoming messages from Zaia webhook."""
     try:
@@ -569,7 +569,7 @@ async def webhook_zaia():
         logger.error(f"Error in webhook: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@APP.route('/webhook/z-api', methods=['POST'])
+@app.route('/webhook/z-api', methods=['POST'])
 async def z_api_webhook():
     """
     Webhook para receber mensagens da Z-API
@@ -617,7 +617,7 @@ async def z_api_webhook():
         logger.error(f"Error processing webhook: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@APP.route('/health', methods=['GET'])
+@app.route('/health', methods=['GET'])
 def health_check():
     """
     Endpoint para verificar se o servidor está funcionando
