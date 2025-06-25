@@ -40,6 +40,8 @@ import cloudinary
 import cloudinary.uploader
 import cloudinary.api
 from elevenlabs.client import ElevenLabs
+from app.config import settings
+from app.routes.webhook_routes import webhook_bp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
