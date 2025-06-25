@@ -2,17 +2,17 @@ import os
 import logging
 import tempfile
 import requests
-import whisper
+import openai
 
 logger = logging.getLogger(__name__)
 
 class WhisperService:
     def __init__(self):
-        self.model = whisper.load_model("base")
+        self.api_key = os.getenv("OPENAI_API_KEY")
 
     def transcribe_audio(self, audio_url: str) -> str:
         """
-        Processa mensagem de áudio: baixa, transcreve e retorna o texto
+        Processa mensagem de áudio: baixa, transcreve usando OpenAI Whisper API e retorna o texto
         """
         try:
             logger.info(f"Baixando áudio de {audio_url}")
@@ -23,15 +23,18 @@ class WhisperService:
                 temp_audio.write(audio_response.content)
                 temp_audio_path = temp_audio.name
             
-            logger.info("Transcrevendo áudio com Whisper")
-            # Transcreve o áudio
-            result = self.model.transcribe(temp_audio_path)
-            
+            logger.info("Transcrevendo áudio com OpenAI Whisper API")
+            with open(temp_audio_path, "rb") as audio_file:
+                transcript = openai.Audio.transcribe(
+                    model="whisper-1",
+                    file=audio_file,
+                    api_key=self.api_key
+                )
             # Remove o arquivo temporário
             os.unlink(temp_audio_path)
             
-            logger.info(f"Transcrição concluída: {result['text']}")
-            return result["text"]
+            logger.info(f"Transcrição concluída: {transcript['text']}")
+            return transcript["text"]
         except Exception as e:
             logger.error(f"Erro ao transcrever áudio: {str(e)}")
             raise 

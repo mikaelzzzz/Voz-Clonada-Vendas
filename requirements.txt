@@ -7,7 +7,6 @@ cloudinary==1.28.0
 gunicorn==20.1.0
 python-multipart==0.0.5
 elevenlabs==2.5.0
-git+https://github.com/openai/whisper.git 
 fastapi==0.109.2
 uvicorn==0.27.1
 pydantic>=2.7.1
