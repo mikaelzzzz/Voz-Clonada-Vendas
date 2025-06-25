@@ -10,43 +10,92 @@ class ZaiaService:
         self.intent_service = IntentService()
 
     @staticmethod
-    async def send_message(message: dict):
+    async def get_or_create_chat(phone: str):
         """
-        Envia mensagem para a Zaia e retorna a resposta
+        Cria um chat na Zaia usando externalId (telefone) ou recupera se já existir.
+        Retorna o chat_id.
         """
-        url = f"{settings.ZAIA_BASE_URL}/chat/{settings.ZAIA_AGENT_ID}/message"
+        base_url = settings.ZAIA_BASE_URL.rstrip("/")
+        agent_id = settings.ZAIA_AGENT_ID
+        api_key = settings.ZAIA_API_KEY
         headers = {
-            "Authorization": f"Bearer {settings.ZAIA_API_KEY}",
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
-        
-        # Extrai o texto da mensagem
-        message_text = message['text']['body'] if 'text' in message else message['transcript']
-        
-        # Detecta a intenção
-        intent = await IntentService.detect_intent(message_text, message.get('chat_id'))
-        
+        # 1. Tenta criar o chat
         payload = {
-            "message": message_text,
-            "channel": "whatsapp",
-            "intent": intent  # Inclui a intenção detectada na requisição
+            "agentId": agent_id,
+            "externalId": phone
         }
-        
-        # Adiciona chat_id se disponível
-        if 'chat_id' in message:
-            payload['chat_id'] = message['chat_id']
-        
+        create_url = f"{base_url}/v1.1/api/external-generative-chat/create"
         async with aiohttp.ClientSession() as session:
             try:
-                logger.info(f"Enviando mensagem para Zaia. URL: {url}")
+                async with session.post(create_url, headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        logger.info(f"Chat criado na Zaia: {data}")
+                        return data["id"]
+                    elif resp.status == 409:
+                        # Chat já existe, buscar pelo externalId
+                        logger.info(f"Chat já existe para {phone}, buscando...")
+                        retrieve_url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple?agentIds={agent_id}&externalIds={phone}"
+                        async with session.get(retrieve_url, headers=headers) as get_resp:
+                            get_data = await get_resp.json()
+                            chats = get_data.get("externalGenerativeChats", [])
+                            if chats:
+                                logger.info(f"Chat recuperado: {chats[0]}")
+                                return chats[0]["id"]
+                            else:
+                                logger.error(f"Nenhum chat encontrado para {phone}")
+                                raise Exception("Nenhum chat encontrado para o telefone informado.")
+                    else:
+                        error_text = await resp.text()
+                        logger.error(f"Erro ao criar chat: Status={resp.status}, Response={error_text}")
+                        raise Exception(f"Erro ao criar chat: {error_text}")
+            except Exception as e:
+                logger.error(f"Erro em get_or_create_chat: {str(e)}")
+                raise
+
+    @staticmethod
+    async def send_message(message: dict):
+        """
+        Envia mensagem para a Zaia e retorna a resposta, garantindo que o chat existe.
+        """
+        base_url = settings.ZAIA_BASE_URL.rstrip("/")
+        agent_id = settings.ZAIA_AGENT_ID
+        api_key = settings.ZAIA_API_KEY
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        # Extrai o texto da mensagem
+        message_text = message['text']['body'] if 'text' in message else message['transcript']
+        phone = message.get('phone') or message.get('from') or message.get('chat_id') or message.get('externalId')
+        if not phone:
+            raise Exception("Telefone (phone) não informado na mensagem para Zaia.")
+        # 1. Garante que o chat existe
+        chat_id = await ZaiaService.get_or_create_chat(phone)
+        # 2. Detecta a intenção
+        intent = await IntentService.detect_intent(message_text, chat_id)
+        # 3. Monta o payload
+        payload = {
+            "agentId": agent_id,
+            "externalGenerativeChatId": chat_id,
+            "prompt": message_text,
+            "custom": {"whatsapp": phone},
+            "intent": intent
+        }
+        url_message = f"{base_url}/v1.1/api/external-generative-message/create"
+        async with aiohttp.ClientSession() as session:
+            try:
+                logger.info(f"Enviando mensagem para Zaia. URL: {url_message}")
                 logger.info(f"Payload: {payload}")
-                async with session.post(url, headers=headers, json=payload) as response:
+                async with session.post(url_message, headers=headers, json=payload) as response:
                     response_json = await response.json()
                     logger.info(f"Resposta da Zaia: {response_json}")
-                    
-                    # Adiciona a intenção detectada à resposta
                     response_json['detected_intent'] = intent
-                    
                     return response_json
             except Exception as e:
                 logger.error(f"Erro ao enviar mensagem para Zaia: {str(e)}")
