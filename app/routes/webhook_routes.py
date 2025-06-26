@@ -29,31 +29,61 @@ async def handle_webhook(request: Request):
             
             # Processa baseado no tipo de mensagem
             if message['type'] == 'audio':
-                # 1. Transcreve o áudio
-                transcript = await whisper_service.transcribe_audio(message['audio']['url'])
-                logger.info(f"Áudio transcrito: {transcript}")
-                
-                # 2. Envia transcrição para Zaia
-                zaia_response = await zaia_service.send_message({
-                    'transcript': transcript,
-                    'phone': phone
-                })
-                
-                # 3. Gera resposta em áudio usando voz clonada
-                audio_bytes = elevenlabs_service.generate_audio(zaia_response['message'])
-                
-                # 4. Envia resposta em áudio
-                await ZAPIService.send_audio(phone, audio_bytes)
+                try:
+                    logger.info(f"Processando mensagem de áudio de {phone}")
+                    
+                    # 1. Transcreve o áudio
+                    transcript = await whisper_service.transcribe_audio(message['audio']['url'])
+                    logger.info(f"Áudio transcrito: {transcript}")
+                    
+                    # 2. Envia transcrição para Zaia (formato correto)
+                    message_data = {
+                        'transcript': transcript,
+                        'phone': phone
+                    }
+                    zaia_response = await zaia_service.send_message(message_data)
+                    logger.info(f"Resposta da Zaia recebida: {zaia_response}")
+                    
+                    # 3. Verifica se há mensagem na resposta
+                    if 'message' in zaia_response and zaia_response['message']:
+                        # 4. Gera resposta em áudio usando voz clonada
+                        audio_bytes = elevenlabs_service.generate_audio(zaia_response['message'])
+                        
+                        # 5. Envia resposta em áudio
+                        await ZAPIService.send_audio(phone, audio_bytes)
+                        logger.info(f"Áudio enviado para {phone}")
+                    else:
+                        logger.warning(f"Zaia não retornou mensagem válida: {zaia_response}")
+                        
+                except Exception as e:
+                    logger.error(f"Erro ao processar áudio: {str(e)}")
+                    # Envia mensagem de erro em texto
+                    await ZAPIService.send_text(phone, "Desculpe, ocorreu um erro ao processar seu áudio.")
                 
             elif message['type'] == 'text':
-                # 1. Envia texto para Zaia
-                zaia_response = await zaia_service.send_message({
-                    'text': {'body': message['text']['body']},
-                    'phone': phone
-                })
-                
-                # 2. Envia resposta em texto
-                await ZAPIService.send_text(phone, zaia_response['message'])
+                try:
+                    logger.info(f"Processando mensagem de texto de {phone}: {message['text']['body']}")
+                    
+                    # 1. Envia texto para Zaia (formato correto)
+                    message_data = {
+                        'text': {'body': message['text']['body']},
+                        'phone': phone
+                    }
+                    zaia_response = await zaia_service.send_message(message_data)
+                    logger.info(f"Resposta da Zaia recebida: {zaia_response}")
+                    
+                    # 2. Verifica se há mensagem na resposta
+                    if 'message' in zaia_response and zaia_response['message']:
+                        # 3. Envia resposta em texto
+                        await ZAPIService.send_text(phone, zaia_response['message'])
+                        logger.info(f"Texto enviado para {phone}")
+                    else:
+                        logger.warning(f"Zaia não retornou mensagem válida: {zaia_response}")
+                        
+                except Exception as e:
+                    logger.error(f"Erro ao processar texto: {str(e)}")
+                    # Envia mensagem de erro
+                    await ZAPIService.send_text(phone, "Desculpe, ocorreu um erro ao processar sua mensagem.")
             
             return JSONResponse({"status": "success"})
         
@@ -70,7 +100,7 @@ async def handle_webhook(request: Request):
         return JSONResponse({"status": "unknown_event"})
         
     except Exception as e:
-        logger.error(f"Erro ao processar webhook: {str(e)}")
+        logger.error(f"Erro geral ao processar webhook: {str(e)}")
         return JSONResponse({
             "status": "error",
             "message": str(e)
