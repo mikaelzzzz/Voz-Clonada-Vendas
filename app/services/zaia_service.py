@@ -7,14 +7,29 @@ import time
 logger = logging.getLogger(__name__)
 
 class ZaiaService:
+    # Cache para armazenar o último chat ID válido por telefone
+    _chat_cache = {}
+    
     def __init__(self):
         pass  # Removido IntentService - Zaia detecta intenções automaticamente
+    
+    @staticmethod
+    def clear_chat_cache(phone: str = None):
+        """
+        Limpa o cache de chats. Se phone for especificado, limpa apenas para esse telefone.
+        """
+        if phone:
+            ZaiaService._chat_cache.pop(phone, None)
+            logger.info(f"🗑️ Cache limpo para {phone}")
+        else:
+            ZaiaService._chat_cache.clear()
+            logger.info(f"🗑️ Cache completo limpo")
 
     @staticmethod
     async def get_or_create_chat(phone: str):
         """
         Busca um chat existente na Zaia para o telefone ou cria um novo se não existir.
-        Usa busca por telefone como fallback se externalId não estiver disponível.
+        Usa cache inteligente para manter consistência entre mensagens.
         Retorna o chat_id.
         """
         logger.info(f"=== INICIANDO get_or_create_chat para telefone: {phone} ===")
@@ -39,16 +54,33 @@ class ZaiaService:
             "Accept": "application/json"
         }
         
-        # Primeiro busca chat existente (mais eficiente que tentar criar)
+        # Primeiro verifica cache
+        cached_chat_id = ZaiaService._chat_cache.get(phone)
+        if cached_chat_id:
+            logger.info(f"🔄 Usando chat do cache para {phone}: {cached_chat_id}")
+            # Verificar se o chat ainda está funcional
+            if await ZaiaService._verify_chat_functional(base_url, headers, cached_chat_id):
+                logger.info(f"✅ CHAT DO CACHE VÁLIDO para {phone} - Chat ID: {cached_chat_id}")
+                return cached_chat_id
+            else:
+                logger.warning(f"⚠️ Chat do cache {cached_chat_id} não está mais funcional, removendo do cache")
+                ZaiaService._chat_cache.pop(phone, None)
+        
+        # Busca chat existente na API
         chat_id = await ZaiaService._find_existing_chat(base_url, headers, agent_id, phone)
         
         if chat_id:
             logger.info(f"✅ CHAT EXISTENTE ENCONTRADO para {phone} - Chat ID: {chat_id}")
+            # Atualizar cache
+            ZaiaService._chat_cache[phone] = chat_id
             return chat_id
         
         # Se não encontrou, cria novo chat
         logger.info(f"🆕 Criando novo chat para {phone}")
-        return await ZaiaService._create_new_chat(base_url, headers, agent_id, phone)
+        new_chat_id = await ZaiaService._create_new_chat(base_url, headers, agent_id, phone)
+        # Atualizar cache
+        ZaiaService._chat_cache[phone] = new_chat_id
+        return new_chat_id
 
     @staticmethod
     async def _find_existing_chat(base_url: str, headers: dict, agent_id: str, phone: str) -> int:
@@ -89,8 +121,11 @@ class ZaiaService:
                 
                 logger.info(f"📋 Analisando {len(chats)} chats na página {page + 1}")
                 
-                # Procurar por chat para este telefone - apenas chats mais recentes
-                for chat in chats:
+                # Ordenar chats por data de criação (mais recentes primeiro)
+                chats_sorted = sorted(chats, key=lambda x: x.get('createdAt', ''), reverse=True)
+                
+                # Procurar por chat para este telefone - priorizar chats mais recentes
+                for chat in chats_sorted:
                     chat_id = chat.get("id")
                     chat_external_id = chat.get("externalId")
                     chat_phone = chat.get("phoneNumber")
@@ -309,6 +344,14 @@ class ZaiaService:
                         if response.status == 200:
                             response_json = await response.json()
                             logger.info(f"✅ Resposta da Zaia para {phone} (Chat {chat_id}): {response_json}")
+                            
+                            # IMPORTANTE: Atualizar cache com o chat ID da resposta da Zaia
+                            # A Zaia pode retornar um chat ID diferente do que enviamos
+                            response_chat_id = response_json.get('externalGenerativeChatId')
+                            if response_chat_id and response_chat_id != chat_id:
+                                logger.info(f"🔄 Atualizando cache: Chat ID {chat_id} → {response_chat_id} para {phone}")
+                                ZaiaService._chat_cache[phone] = response_chat_id
+                            
                             return response_json
                             
                         elif response.status == 404:
