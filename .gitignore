@@ -25,23 +25,18 @@ venv/
 env/
 ENV/
 
+# Environment variables
+.env
+
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Environment variables
-.env
-.env.local
-
 # Logs
 *.log
 
-# System Files
+# Local development
 .DS_Store
-Thumbs.db
-
-# Audio files
-audio_files/
-tmp/ 
+Thumbs.db 
