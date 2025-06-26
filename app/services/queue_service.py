@@ -63,19 +63,19 @@ class QueueService:
             # 3. Geração do áudio de resposta
             audio_response = elevenlabs_service.generate_audio(zaia_response['message'])
             
-            # 4. Envio da resposta
-            await ZAPIService.send_audio(
+            # 4. Envio da resposta com simulação de gravação
+            await ZAPIService.send_audio_with_typing(
                 phone=task_data['phone'],
-                audio_url=audio_response['audio_url']
+                audio_bytes=audio_response
             )
             
             logger.info(f"Tarefa processada com sucesso para {task_data['phone']}")
             
         except Exception as e:
             logger.error(f"Erro ao processar tarefa: {str(e)}")
-            # Envia mensagem de erro para o usuário
+            # Envia mensagem de erro para o usuário com simulação de digitação
             try:
-                await ZAPIService.send_text(
+                await ZAPIService.send_text_with_typing(
                     phone=task_data['phone'],
                     message="Desculpe, tive um problema ao processar sua mensagem. Por favor, tente novamente."
                 )
