@@ -54,13 +54,14 @@ class ZaiaService:
     async def _find_existing_chat(base_url: str, headers: dict, agent_id: str, phone: str) -> int:
         """
         Busca chat existente para o telefone usando diferentes estratégias.
+        Verifica se o chat encontrado está realmente funcional.
         """
         logger.info(f"🔍 BUSCANDO chat existente para {phone}")
         
         # Buscar com paginação otimizada
         limit = 100
         offset = 0
-        max_pages = 5  # Reduzir para ser mais eficiente
+        max_pages = 3  # Reduzir ainda mais para ser eficiente
         
         for page in range(max_pages):
             url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple"
@@ -88,26 +89,39 @@ class ZaiaService:
                 
                 logger.info(f"📋 Analisando {len(chats)} chats na página {page + 1}")
                 
-                # Procurar por chat para este telefone
+                # Procurar por chat para este telefone - apenas chats mais recentes
                 for chat in chats:
                     chat_id = chat.get("id")
                     chat_external_id = chat.get("externalId")
                     chat_phone = chat.get("phoneNumber")
                     channel = chat.get("channel")
                     status = chat.get("status")
+                    created_at = chat.get("createdAt")
+                    
+                    # Só considerar chats ativos
+                    if status != "active":
+                        continue
                     
                     # Estratégia 1: Buscar por externalId se existir
                     external_id = f"whatsapp_{phone}"
-                    if chat_external_id == external_id and status == "active":
+                    if chat_external_id == external_id:
                         logger.info(f"✅ CHAT ENCONTRADO por externalId para {phone} - Chat ID: {chat_id}")
-                        return chat_id
+                        # Verificar se o chat está realmente funcional
+                        if await ZaiaService._verify_chat_functional(base_url, headers, chat_id):
+                            return chat_id
+                        else:
+                            logger.warning(f"⚠️ Chat {chat_id} não está funcional, continuando busca...")
+                            continue
                     
                     # Estratégia 2: Buscar por phoneNumber + channel (fallback)
-                    if (chat_phone == phone and 
-                        channel == "whatsapp" and 
-                        status == "active"):
+                    if (chat_phone == phone and channel == "whatsapp"):
                         logger.info(f"✅ CHAT ENCONTRADO por phoneNumber para {phone} - Chat ID: {chat_id}")
-                        return chat_id
+                        # Verificar se o chat está realmente funcional
+                        if await ZaiaService._verify_chat_functional(base_url, headers, chat_id):
+                            return chat_id
+                        else:
+                            logger.warning(f"⚠️ Chat {chat_id} não está funcional, continuando busca...")
+                            continue
                 
                 # Verificar se há mais páginas
                 if len(chats) < limit:
@@ -120,8 +134,33 @@ class ZaiaService:
                 logger.error(f"❌ Erro na busca página {page + 1}: {str(e)}")
                 break
         
-        logger.info(f"❌ Nenhum chat encontrado para {phone}")
+        logger.info(f"❌ Nenhum chat funcional encontrado para {phone}")
         return None
+
+    @staticmethod
+    async def _verify_chat_functional(base_url: str, headers: dict, chat_id: int) -> bool:
+        """
+        Verifica se um chat está realmente funcional fazendo uma verificação leve.
+        """
+        try:
+            # Fazer uma requisição simples para verificar se o chat existe
+            url = f"{base_url}/v1.1/api/external-generative-chat/retrieve"
+            params = {"id": chat_id}
+            
+            response = requests.get(url, params=params, headers=headers, timeout=5)
+            
+            if response.status_code == 200:
+                chat_data = response.json()
+                status = chat_data.get("status")
+                logger.info(f"🔍 Chat {chat_id} verificado - Status: {status}")
+                return status == "active"
+            else:
+                logger.warning(f"⚠️ Chat {chat_id} não encontrado na verificação: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Erro ao verificar chat {chat_id}: {str(e)}")
+            return False
 
     @staticmethod
     async def _create_new_chat(base_url: str, headers: dict, agent_id: str, phone: str) -> int:
@@ -196,6 +235,7 @@ class ZaiaService:
         """
         Envia mensagem para a Zaia e retorna a resposta.
         Usa chat_id e externalId para manter consistência conforme documentação.
+        Implementa retry inteligente em caso de chat inválido.
         
         Args:
             message: Dicionário contendo:
@@ -229,60 +269,67 @@ class ZaiaService:
             
         logger.info(f"📱 Processando mensagem: '{message_text}' do telefone: {phone}")
         
-        try:
-            # 1. Buscar ou criar chat na Zaia
-            logger.info(f"🔄 Obtendo chat via API da Zaia para {phone}...")
-            chat_id = await ZaiaService.get_or_create_chat(phone)
-            logger.info(f"✅ Chat ID obtido para {phone}: {chat_id}")
-            
-            # 2. Enviar mensagem usando o chat correto com externalId
-            external_id = f"whatsapp_{phone}"
-            payload = {
-                "agentId": int(agent_id),
-                "externalGenerativeChatId": chat_id,
-                "externalGenerativeChatExternalId": external_id,  # Conforme documentação
-                "prompt": message_text,
-                "streaming": False,
-                "asMarkdown": False,
-                "custom": {"whatsapp": phone}
-            }
-            
-            url_message = f"{base_url}/v1.1/api/external-generative-message/create"
-            logger.info(f"📤 Enviando mensagem para Zaia - URL: {url_message}")
-            logger.info(f"📤 Chat ID: {chat_id}, External ID: {external_id} (telefone: {phone})")
-            logger.info(f"📤 Payload: {payload}")
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url_message, headers=headers, json=payload) as response:
-                    logger.info(f"📥 Resposta da Zaia - Status: {response.status}")
-                    
-                    if response.status == 200:
-                        response_json = await response.json()
-                        logger.info(f"✅ Resposta da Zaia para {phone} (Chat {chat_id}): {response_json}")
-                        return response_json
+        # Máximo de 2 tentativas
+        for attempt in range(2):
+            try:
+                # 1. Buscar ou criar chat na Zaia
+                logger.info(f"🔄 Tentativa {attempt + 1}: Obtendo chat via API da Zaia para {phone}...")
+                
+                if attempt == 0:
+                    # Primeira tentativa: buscar chat existente
+                    chat_id = await ZaiaService.get_or_create_chat(phone)
+                else:
+                    # Segunda tentativa: forçar criação de novo chat
+                    logger.info(f"🆕 Forçando criação de novo chat para {phone}")
+                    chat_id = await ZaiaService._create_new_chat(base_url, headers, agent_id, phone)
+                
+                logger.info(f"✅ Chat ID obtido para {phone}: {chat_id}")
+                
+                # 2. Enviar mensagem usando o chat correto com externalId
+                external_id = f"whatsapp_{phone}"
+                payload = {
+                    "agentId": int(agent_id),
+                    "externalGenerativeChatId": chat_id,
+                    "externalGenerativeChatExternalId": external_id,  # Conforme documentação
+                    "prompt": message_text,
+                    "streaming": False,
+                    "asMarkdown": False,
+                    "custom": {"whatsapp": phone}
+                }
+                
+                url_message = f"{base_url}/v1.1/api/external-generative-message/create"
+                logger.info(f"📤 Enviando mensagem para Zaia - URL: {url_message}")
+                logger.info(f"📤 Chat ID: {chat_id}, External ID: {external_id} (telefone: {phone})")
+                logger.info(f"📤 Payload: {payload}")
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url_message, headers=headers, json=payload) as response:
+                        logger.info(f"📥 Resposta da Zaia - Status: {response.status}")
                         
-                    elif response.status == 404:
-                        # Chat não existe mais - buscar/criar novo
-                        logger.info(f"🔄 Chat {chat_id} não encontrado, buscando/criando novo...")
-                        new_chat_id = await ZaiaService.get_or_create_chat(phone)
-                        new_external_id = f"whatsapp_{phone}"
-                        payload["externalGenerativeChatId"] = new_chat_id
-                        payload["externalGenerativeChatExternalId"] = new_external_id
-                        
-                        # Tentar novamente com novo chat
-                        async with session.post(url_message, headers=headers, json=payload) as retry_response:
-                            if retry_response.status == 200:
-                                response_json = await retry_response.json()
-                                logger.info(f"✅ Resposta da Zaia (retry) para {phone} (Chat {new_chat_id}): {response_json}")
-                                return response_json
+                        if response.status == 200:
+                            response_json = await response.json()
+                            logger.info(f"✅ Resposta da Zaia para {phone} (Chat {chat_id}): {response_json}")
+                            return response_json
+                            
+                        elif response.status == 404:
+                            # Chat não existe - tentar próxima iteração se ainda há tentativas
+                            error_text = await response.text()
+                            logger.warning(f"⚠️ Chat {chat_id} retornou 404: {error_text}")
+                            
+                            if attempt < 1:  # Se não é a última tentativa
+                                logger.info(f"🔄 Tentando novamente com novo chat...")
+                                continue
                             else:
-                                error_text = await retry_response.text()
-                                raise Exception(f"Erro no retry: Status {retry_response.status} - {error_text}")
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"❌ Erro ao enviar mensagem: Status={response.status}, Response={error_text}")
-                        raise Exception(f"Erro ao enviar mensagem: Status {response.status} - {error_text}")
-                    
-        except Exception as e:
-            logger.error(f"❌ Erro ao enviar mensagem para Zaia (telefone: {phone}): {str(e)}")
-            raise 
+                                raise Exception(f"Chat não funcional após {attempt + 1} tentativas: {error_text}")
+                        else:
+                            error_text = await response.text()
+                            logger.error(f"❌ Erro ao enviar mensagem: Status={response.status}, Response={error_text}")
+                            raise Exception(f"Erro ao enviar mensagem: Status {response.status} - {error_text}")
+                        
+            except Exception as e:
+                if attempt < 1:  # Se não é a última tentativa
+                    logger.warning(f"⚠️ Tentativa {attempt + 1} falhou: {str(e)}")
+                    continue
+                else:
+                    logger.error(f"❌ Erro ao enviar mensagem para Zaia após {attempt + 1} tentativas (telefone: {phone}): {str(e)}")
+                    raise 
