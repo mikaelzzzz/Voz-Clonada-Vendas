@@ -14,7 +14,7 @@ class ElevenLabsService:
         # Configurações otimizadas para português brasileiro
         self.voice_settings = {
             "stability": 0.6,           # Estabilidade (0-1) - mais alto = mais consistente
-            "similarity_boost": 0.85,   # Similaridade com voz original (0-1)
+            "similarity_boost": 1.0,    # Similaridade com voz original (0-1) - MÁXIMO
             "style": 0.25,              # Estilo/expressividade (0-1)
             "use_speaker_boost": True,  # Melhora clareza e consistência
             "speed": 1.15               # Velocidade da fala (0.25-4.0) - mais rápido
