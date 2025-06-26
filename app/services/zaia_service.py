@@ -195,7 +195,7 @@ class ZaiaService:
     async def send_message(message: dict):
         """
         Envia mensagem para a Zaia e retorna a resposta.
-        Usa chat_id para manter consistência.
+        Usa chat_id e externalId para manter consistência conforme documentação.
         
         Args:
             message: Dicionário contendo:
@@ -235,10 +235,12 @@ class ZaiaService:
             chat_id = await ZaiaService.get_or_create_chat(phone)
             logger.info(f"✅ Chat ID obtido para {phone}: {chat_id}")
             
-            # 2. Enviar mensagem usando o chat correto
+            # 2. Enviar mensagem usando o chat correto com externalId
+            external_id = f"whatsapp_{phone}"
             payload = {
                 "agentId": int(agent_id),
                 "externalGenerativeChatId": chat_id,
+                "externalGenerativeChatExternalId": external_id,  # Conforme documentação
                 "prompt": message_text,
                 "streaming": False,
                 "asMarkdown": False,
@@ -247,7 +249,7 @@ class ZaiaService:
             
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
             logger.info(f"📤 Enviando mensagem para Zaia - URL: {url_message}")
-            logger.info(f"📤 Chat ID usado: {chat_id} (para telefone: {phone})")
+            logger.info(f"📤 Chat ID: {chat_id}, External ID: {external_id} (telefone: {phone})")
             logger.info(f"📤 Payload: {payload}")
             
             async with aiohttp.ClientSession() as session:
@@ -263,7 +265,9 @@ class ZaiaService:
                         # Chat não existe mais - buscar/criar novo
                         logger.info(f"🔄 Chat {chat_id} não encontrado, buscando/criando novo...")
                         new_chat_id = await ZaiaService.get_or_create_chat(phone)
+                        new_external_id = f"whatsapp_{phone}"
                         payload["externalGenerativeChatId"] = new_chat_id
+                        payload["externalGenerativeChatExternalId"] = new_external_id
                         
                         # Tentar novamente com novo chat
                         async with session.post(url_message, headers=headers, json=payload) as retry_response:
