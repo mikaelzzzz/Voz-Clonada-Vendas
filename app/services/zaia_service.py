@@ -52,9 +52,29 @@ class ZaiaService:
                         
                         chats = get_data.get("externalGenerativeChats", [])
                         if chats:
-                            existing_chat_id = chats[0]["id"]
-                            logger.info(f"✅ CHAT EXISTENTE ENCONTRADO para {phone} - Chat ID: {existing_chat_id}")
-                            return existing_chat_id
+                            # 🚨 BUG FIX: Filtrar pelo phoneNumber correto, não pegar o primeiro da lista
+                            matching_chat = None
+                            for chat in chats:
+                                chat_phone = chat.get('phoneNumber')
+                                chat_channel = chat.get('channel')
+                                chat_status = chat.get('status')
+                                
+                                logger.info(f"🔍 Analisando chat ID {chat['id']}: phone={chat_phone}, channel={chat_channel}, status={chat_status}")
+                                
+                                # Busca chat ativo do WhatsApp com o número correto
+                                if (chat_phone == phone and 
+                                    chat_channel == 'whatsapp' and 
+                                    chat_status == 'active'):
+                                    matching_chat = chat
+                                    break
+                            
+                            if matching_chat:
+                                existing_chat_id = matching_chat["id"]
+                                logger.info(f"✅ CHAT EXISTENTE ENCONTRADO para {phone} - Chat ID: {existing_chat_id}")
+                                logger.info(f"✅ Chat details: {matching_chat}")
+                                return existing_chat_id
+                            else:
+                                logger.info(f"❌ Nenhum chat ativo do WhatsApp encontrado para {phone}")
                         else:
                             logger.info(f"❌ Nenhum chat existente encontrado para {phone}")
                     else:
@@ -63,7 +83,9 @@ class ZaiaService:
                 # 2. Se não encontrou, cria um novo chat
                 payload = {
                     "agentId": int(agent_id),  # Converte para inteiro
-                    "externalId": phone
+                    "externalId": phone,
+                    "channel": "whatsapp",  # 🚨 FIX: Especificar canal WhatsApp
+                    "phoneNumber": phone    # 🚨 FIX: Especificar phoneNumber explicitamente
                 }
                 create_url = f"{base_url}/v1.1/api/external-generative-chat/create"
                 
@@ -87,10 +109,15 @@ class ZaiaService:
                             if get_resp2.status == 200:
                                 get_data2 = await get_resp2.json()
                                 chats2 = get_data2.get("externalGenerativeChats", [])
-                                if chats2:
-                                    race_chat_id = chats2[0]["id"]
-                                    logger.info(f"✅ CHAT RECUPERADO após race condition para {phone} - Chat ID: {race_chat_id}")
-                                    return race_chat_id
+                                
+                                # Aplicar o mesmo filtro na segunda busca
+                                for chat in chats2:
+                                    if (chat.get('phoneNumber') == phone and 
+                                        chat.get('channel') == 'whatsapp' and 
+                                        chat.get('status') == 'active'):
+                                        race_chat_id = chat["id"]
+                                        logger.info(f"✅ CHAT RECUPERADO após race condition para {phone} - Chat ID: {race_chat_id}")
+                                        return race_chat_id
                         
                         logger.error(f"❌ Falha ao recuperar chat após race condition para {phone}")
                         raise Exception("Falha ao recuperar chat após conflito de criação")
