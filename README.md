@@ -48,7 +48,7 @@ Z_API_SECURITY_TOKEN=seu_token_seguranca
 # Zaia
 ZAIA_API_KEY=sua_chave
 ZAIA_AGENT_ID=seu_agent_id
-ZAIA_BASE_URL=https://api.zaia.tech
+ZAIA_BASE_URL=https://api.zaia.app
 
 # ElevenLabs
 ELEVENLABS_API_KEY=sua_chave

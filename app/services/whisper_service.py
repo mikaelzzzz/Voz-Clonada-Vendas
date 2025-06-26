@@ -3,13 +3,22 @@ import logging
 import tempfile
 import requests
 from openai import OpenAI
+import httpx
 
 logger = logging.getLogger(__name__)
 
 class WhisperService:
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
-        self.client = OpenAI(api_key=self.api_key)
+        # Inicializa o cliente OpenAI com configuração explícita de httpx
+        http_client = httpx.Client(
+            timeout=60.0,
+            follow_redirects=True
+        )
+        self.client = OpenAI(
+            api_key=self.api_key,
+            http_client=http_client
+        )
 
     async def transcribe_audio(self, audio_url: str) -> str:
         """
