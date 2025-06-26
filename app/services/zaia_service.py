@@ -58,13 +58,9 @@ class ZaiaService:
         cached_chat_id = ZaiaService._chat_cache.get(phone)
         if cached_chat_id:
             logger.info(f"🔄 Usando chat do cache para {phone}: {cached_chat_id}")
-            # Verificar se o chat ainda está funcional
-            if await ZaiaService._verify_chat_functional(base_url, headers, cached_chat_id):
-                logger.info(f"✅ CHAT DO CACHE VÁLIDO para {phone} - Chat ID: {cached_chat_id}")
-                return cached_chat_id
-            else:
-                logger.warning(f"⚠️ Chat do cache {cached_chat_id} não está mais funcional, removendo do cache")
-                ZaiaService._chat_cache.pop(phone, None)
+            # Não verificamos mais porque a Zaia pode não expor o chat recém-criado na rota de retrieve.
+            # Caso o chat não funcione, o próprio endpoint de envio retornará 404 e iremos lidar lá.
+            return cached_chat_id
         
         # Busca chat existente na API
         chat_id = await ZaiaService._find_existing_chat(base_url, headers, agent_id, phone)
