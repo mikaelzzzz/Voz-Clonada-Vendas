@@ -43,16 +43,45 @@ class ZaiaService:
         
         async with aiohttp.ClientSession() as session:
             try:
+                # 1. Primeiro, tenta buscar usando endpoint individual (mais eficiente)
+                retrieve_individual_url = f"{base_url}/v1.1/api/external-generative-chat/retrieve?agentId={agent_id}&externalId={phone}"
+                logger.info(f"🔍 BUSCANDO chat individual - URL: {retrieve_individual_url}")
+                
+                async with session.get(retrieve_individual_url, headers=headers) as get_resp:
+                    logger.info(f"📋 Resposta da busca individual - Status: {get_resp.status}")
+                    
+                    if get_resp.status == 200:
+                        chat_data = await get_resp.json()
+                        logger.info(f"📋 Chat encontrado via endpoint individual: {chat_data}")
+                        
+                        # Verificar se é chat ativo do WhatsApp
+                        if (chat_data.get('phoneNumber') == phone and 
+                            chat_data.get('channel') == 'whatsapp' and 
+                            chat_data.get('status') == 'active'):
+                            existing_chat_id = chat_data["id"]
+                            logger.info(f"✅ CHAT INDIVIDUAL ENCONTRADO para {phone} - Chat ID: {existing_chat_id}")
+                            return existing_chat_id
+                        else:
+                            logger.info(f"⚠️ Chat encontrado mas não é WhatsApp ativo: {chat_data}")
+                    elif get_resp.status == 404:
+                        logger.info(f"❌ Nenhum chat encontrado via endpoint individual para {phone}")
+                    else:
+                        logger.warning(f"⚠️ Erro na busca individual: Status {get_resp.status}")
+                
+                # 2. Se não encontrou via endpoint individual, buscar na lista múltipla
+                retrieve_url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple?agentIds={agent_id}&externalIds={phone}"
+                logger.info(f"🔍 BUSCANDO na lista múltipla - URL: {retrieve_url}")
+                
                 async with session.get(retrieve_url, headers=headers) as get_resp:
-                    logger.info(f"📋 Resposta da busca - Status: {get_resp.status}")
+                    logger.info(f"📋 Resposta da busca múltipla - Status: {get_resp.status}")
                     
                     if get_resp.status == 200:
                         get_data = await get_resp.json()
-                        logger.info(f"📋 Dados da busca completos: {get_data}")
+                        logger.info(f"📋 Dados da busca múltipla: {get_data}")
                         
                         chats = get_data.get("externalGenerativeChats", [])
                         if chats:
-                            # 🚨 BUG FIX: Filtrar pelo phoneNumber correto, não pegar o primeiro da lista
+                            # Filtrar pelo phoneNumber correto
                             matching_chat = None
                             for chat in chats:
                                 chat_phone = chat.get('phoneNumber')
@@ -70,15 +99,14 @@ class ZaiaService:
                             
                             if matching_chat:
                                 existing_chat_id = matching_chat["id"]
-                                logger.info(f"✅ CHAT EXISTENTE ENCONTRADO para {phone} - Chat ID: {existing_chat_id}")
-                                logger.info(f"✅ Chat details: {matching_chat}")
+                                logger.info(f"✅ CHAT MÚLTIPLO ENCONTRADO para {phone} - Chat ID: {existing_chat_id}")
                                 return existing_chat_id
                             else:
-                                logger.info(f"❌ Nenhum chat ativo do WhatsApp encontrado para {phone}")
+                                logger.info(f"❌ Nenhum chat ativo do WhatsApp encontrado na lista múltipla para {phone}")
                         else:
-                            logger.info(f"❌ Nenhum chat existente encontrado para {phone}")
+                            logger.info(f"❌ Lista múltipla vazia para {phone}")
                     else:
-                        logger.warning(f"⚠️  Erro na busca de chat existente: Status {get_resp.status}")
+                        logger.warning(f"⚠️ Erro na busca múltipla: Status {get_resp.status}")
                 
                 # 2. Se não encontrou, cria um novo chat
                 payload = {
@@ -102,22 +130,36 @@ class ZaiaService:
                         logger.info(f"✅ Dados completos do novo chat: {data}")
                         return new_chat_id
                     elif resp.status == 409:
-                        # Chat foi criado entre a busca e a criação (race condition)
-                        logger.info(f"🔄 Chat foi criado por outra requisição, buscando novamente...")
+                        # Chat foi criado entre as buscas e a criação
+                        logger.info(f"🔄 Chat criado por race condition, tentando busca individual novamente...")
                         
-                        async with session.get(retrieve_url, headers=headers) as get_resp2:
+                        # Tentar busca individual novamente após race condition
+                        async with session.get(retrieve_individual_url, headers=headers) as get_resp2:
                             if get_resp2.status == 200:
-                                get_data2 = await get_resp2.json()
-                                chats2 = get_data2.get("externalGenerativeChats", [])
+                                chat_data2 = await get_resp2.json()
+                                logger.info(f"🔄 Chat recuperado após race condition: {chat_data2}")
                                 
-                                # Aplicar o mesmo filtro na segunda busca
-                                for chat in chats2:
+                                if (chat_data2.get('phoneNumber') == phone and 
+                                    chat_data2.get('channel') == 'whatsapp' and 
+                                    chat_data2.get('status') == 'active'):
+                                    race_chat_id = chat_data2["id"]
+                                    logger.info(f"✅ CHAT RECUPERADO após race condition para {phone} - Chat ID: {race_chat_id}")
+                                    return race_chat_id
+                        
+                        # Se ainda não conseguiu, tentar busca múltipla como fallback
+                        logger.info(f"🔄 Tentando busca múltipla como fallback após race condition...")
+                        async with session.get(retrieve_url, headers=headers) as get_resp3:
+                            if get_resp3.status == 200:
+                                get_data3 = await get_resp3.json()
+                                chats3 = get_data3.get("externalGenerativeChats", [])
+                                
+                                for chat in chats3:
                                     if (chat.get('phoneNumber') == phone and 
                                         chat.get('channel') == 'whatsapp' and 
                                         chat.get('status') == 'active'):
-                                        race_chat_id = chat["id"]
-                                        logger.info(f"✅ CHAT RECUPERADO após race condition para {phone} - Chat ID: {race_chat_id}")
-                                        return race_chat_id
+                                        fallback_chat_id = chat["id"]
+                                        logger.info(f"✅ CHAT FALLBACK RECUPERADO para {phone} - Chat ID: {fallback_chat_id}")
+                                        return fallback_chat_id
                         
                         logger.error(f"❌ Falha ao recuperar chat após race condition para {phone}")
                         raise Exception("Falha ao recuperar chat após conflito de criação")
