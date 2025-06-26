@@ -72,17 +72,17 @@ class ZaiaService:
             # Procurar por chat do WhatsApp ativo
             for chat in chats:
                 chat_id = chat.get("id")
-                phone = chat.get("phoneNumber")
+                chat_phone = chat.get("phoneNumber")
                 channel = chat.get("channel")
                 status = chat.get("status")
                 
-                logger.info(f"🔍 Analisando chat ID {chat_id}: phone={phone}, channel={channel}, status={status}")
+                logger.info(f"🔍 Analisando chat ID {chat_id}: phone={chat_phone}, channel={channel}, status={status}")
                 
                 # Verificar se é o chat correto
-                if (phone == phone_number and 
+                if (chat_phone == phone and 
                     channel == "whatsapp" and 
                     status == "active"):
-                    logger.info(f"✅ CHAT EXISTENTE ENCONTRADO para {phone_number} - Chat ID: {chat_id}")
+                    logger.info(f"✅ CHAT EXISTENTE ENCONTRADO para {phone} - Chat ID: {chat_id}")
                     logger.info(f"✅ Chat details: {chat}")
                     return chat_id
             
@@ -97,21 +97,21 @@ class ZaiaService:
                 break
         
         # Se não encontrou, criar novo chat
-        logger.info(f"❌ Nenhum chat ativo do WhatsApp encontrado para {phone_number}")
-        logger.info(f"🆕 CRIANDO NOVO CHAT - URL: {self.base_url}/v1.1/api/external-generative-chat/create")
+        logger.info(f"❌ Nenhum chat ativo do WhatsApp encontrado para {phone}")
+        logger.info(f"🆕 CRIANDO NOVO CHAT - URL: {base_url}/v1.1/api/external-generative-chat/create")
         
         payload = {
-            "agentId": int(self.agent_id),
-            "externalId": phone_number,
+            "agentId": int(agent_id),
+            "externalId": phone,
             "channel": "whatsapp",
-            "phoneNumber": phone_number
+            "phoneNumber": phone
         }
         logger.info(f"🆕 Payload: {payload}")
         
         response = requests.post(
-            f"{self.base_url}/v1.1/api/external-generative-chat/create",
+            f"{base_url}/v1.1/api/external-generative-chat/create",
             json=payload,
-            headers=self.headers
+            headers=headers
         )
         
         logger.info(f"🆕 Resposta da criação - Status: {response.status_code}")
@@ -119,7 +119,7 @@ class ZaiaService:
         if response.status_code == 201:
             chat_data = response.json()
             chat_id = chat_data.get("id")
-            logger.info(f"✅ NOVO CHAT CRIADO para {phone_number} - Chat ID: {chat_id}")
+            logger.info(f"✅ NOVO CHAT CRIADO para {phone} - Chat ID: {chat_id}")
             logger.info(f"✅ Dados do novo chat: {chat_data}")
             return chat_id
         elif response.status_code == 409:
@@ -130,12 +130,12 @@ class ZaiaService:
             time.sleep(1)
             
             response = requests.get(
-                f"{self.base_url}/v1.1/api/external-generative-chat/retrieve-multiple",
+                f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple",
                 params={
-                    "agentIds": [int(self.agent_id)],
+                    "agentIds": [int(agent_id)],
                     "limit": 100  # Buscar mais chats na recuperação pós-race condition
                 },
-                headers=self.headers
+                headers=headers
             )
             
             if response.status_code == 200:
@@ -144,14 +144,14 @@ class ZaiaService:
                 
                 # Procurar novamente por chat do WhatsApp ativo
                 for chat in data.get("externalGenerativeChats", []):
-                    if (chat.get("phoneNumber") == phone_number and 
+                    if (chat.get("phoneNumber") == phone and 
                         chat.get("channel") == "whatsapp" and 
                         chat.get("status") == "active"):
                         chat_id = chat.get("id")
-                        logger.info(f"✅ CHAT ENCONTRADO após race condition para {phone_number} - Chat ID: {chat_id}")
+                        logger.info(f"✅ CHAT ENCONTRADO após race condition para {phone} - Chat ID: {chat_id}")
                         return chat_id
             
-            logger.error(f"❌ Falha ao recuperar chat após race condition para {phone_number}")
+            logger.error(f"❌ Falha ao recuperar chat após race condition para {phone}")
             raise Exception("Falha ao recuperar chat após conflito de criação")
         else:
             logger.error(f"❌ Erro ao criar chat: {response.status_code} - {response.text}")
