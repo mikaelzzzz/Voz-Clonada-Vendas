@@ -286,12 +286,11 @@ class ZaiaService:
                 
                 logger.info(f"✅ Chat ID obtido para {phone}: {chat_id}")
                 
-                # 2. Enviar mensagem usando o chat correto com externalId
-                external_id = f"whatsapp_{phone}"
+                # 2. Enviar mensagem usando o chat correto
+                # Não usar externalId no payload de mensagem - usar apenas o chat_id
                 payload = {
                     "agentId": int(agent_id),
                     "externalGenerativeChatId": chat_id,
-                    "externalGenerativeChatExternalId": external_id,  # Conforme documentação
                     "prompt": message_text,
                     "streaming": False,
                     "asMarkdown": False,
@@ -300,7 +299,7 @@ class ZaiaService:
                 
                 url_message = f"{base_url}/v1.1/api/external-generative-message/create"
                 logger.info(f"📤 Enviando mensagem para Zaia - URL: {url_message}")
-                logger.info(f"📤 Chat ID: {chat_id}, External ID: {external_id} (telefone: {phone})")
+                logger.info(f"📤 Chat ID: {chat_id} (telefone: {phone})")
                 logger.info(f"📤 Payload: {payload}")
                 
                 async with aiohttp.ClientSession() as session:
