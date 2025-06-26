@@ -2,13 +2,14 @@ import os
 import logging
 import tempfile
 import requests
-import openai
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
 class WhisperService:
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
+        self.client = OpenAI(api_key=self.api_key)
 
     async def transcribe_audio(self, audio_url: str) -> str:
         """
@@ -18,23 +19,43 @@ class WhisperService:
             logger.info(f"Baixando áudio de {audio_url}")
             # Download do arquivo de áudio
             audio_response = requests.get(audio_url)
+            audio_response.raise_for_status()  # Verifica se o download foi bem-sucedido
             
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio:
+            # Determina a extensão do arquivo baseado no Content-Type ou URL
+            content_type = audio_response.headers.get('content-type', '')
+            if 'ogg' in content_type or audio_url.endswith('.ogg'):
+                suffix = ".ogg"
+            elif 'mp3' in content_type or audio_url.endswith('.mp3'):
+                suffix = ".mp3"
+            elif 'wav' in content_type or audio_url.endswith('.wav'):
+                suffix = ".wav"
+            else:
+                suffix = ".ogg"  # Padrão para Z-API
+            
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_audio:
                 temp_audio.write(audio_response.content)
                 temp_audio_path = temp_audio.name
             
-            logger.info("Transcrevendo áudio com OpenAI Whisper API")
+            logger.info(f"Transcrevendo áudio com OpenAI Whisper API (arquivo: {suffix})")
             with open(temp_audio_path, "rb") as audio_file:
-                transcript = openai.Audio.transcribe(
+                transcript = self.client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
-                    api_key=self.api_key
+                    language="pt"  # Especifica português para melhor precisão
                 )
+            
             # Remove o arquivo temporário
             os.unlink(temp_audio_path)
             
-            logger.info(f"Transcrição concluída: {transcript['text']}")
-            return transcript["text"]
+            logger.info(f"Transcrição concluída: {transcript.text}")
+            return transcript.text
+            
         except Exception as e:
             logger.error(f"Erro ao transcrever áudio: {str(e)}")
+            # Limpa arquivo temporário em caso de erro
+            try:
+                if 'temp_audio_path' in locals():
+                    os.unlink(temp_audio_path)
+            except:
+                pass
             raise 

@@ -60,9 +60,8 @@ async def handle_webhook(request: Request):
                         logger.warning(f"Zaia não retornou mensagem válida: {zaia_response}")
                         
                 except Exception as e:
-                    logger.error(f"Erro ao processar áudio: {str(e)}")
-                    # Envia mensagem de erro em texto
-                    await ZAPIService.send_text(phone, "Desculpe, ocorreu um erro ao processar seu áudio.")
+                    logger.error(f"Erro ao processar áudio de {phone}: {str(e)}")
+                    # Não envia mensagem de erro para o cliente - apenas loga
                 
             elif 'text' in data and data['text']:
                 try:
@@ -86,9 +85,8 @@ async def handle_webhook(request: Request):
                         logger.warning(f"Zaia não retornou mensagem válida: {zaia_response}")
                         
                 except Exception as e:
-                    logger.error(f"Erro ao processar texto: {str(e)}")
-                    # Envia mensagem de erro
-                    await ZAPIService.send_text(phone, "Desculpe, ocorreu um erro ao processar sua mensagem.")
+                    logger.error(f"Erro ao processar texto de {phone}: {str(e)}")
+                    # Não envia mensagem de erro para o cliente - apenas loga
             
             else:
                 logger.info(f"Tipo de mensagem não suportado ou vazio para {phone}")
@@ -129,9 +127,8 @@ async def handle_webhook(request: Request):
                         logger.warning(f"Zaia não retornou mensagem válida: {zaia_response}")
                         
                 except Exception as e:
-                    logger.error(f"Erro ao processar áudio: {str(e)}")
-                    # Envia mensagem de erro em texto
-                    await ZAPIService.send_text(phone, "Desculpe, ocorreu um erro ao processar seu áudio.")
+                    logger.error(f"Erro ao processar áudio de {phone} (formato antigo): {str(e)}")
+                    # Não envia mensagem de erro para o cliente - apenas loga
                 
             elif message['type'] == 'text':
                 try:
@@ -154,9 +151,8 @@ async def handle_webhook(request: Request):
                         logger.warning(f"Zaia não retornou mensagem válida: {zaia_response}")
                         
                 except Exception as e:
-                    logger.error(f"Erro ao processar texto: {str(e)}")
-                    # Envia mensagem de erro
-                    await ZAPIService.send_text(phone, "Desculpe, ocorreu um erro ao processar sua mensagem.")
+                    logger.error(f"Erro ao processar texto de {phone}: {str(e)}")
+                    # Não envia mensagem de erro para o cliente - apenas loga
             
             return JSONResponse({"status": "success"})
         
