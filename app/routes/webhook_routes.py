@@ -14,6 +14,7 @@ router = APIRouter()
 # Instancia os serviços
 elevenlabs_service = ElevenLabsService()
 whisper_service = WhisperService()
+zaia_service = ZaiaService()
 
 @router.post("")
 async def handle_webhook(request: Request):
@@ -21,53 +22,48 @@ async def handle_webhook(request: Request):
         data = await request.json()
         logger.info(f"Webhook recebido: {data}")
 
-        # Verifica se é uma mensagem de áudio
-        if data.get('type') == 'audio':
-            # Adiciona à fila de processamento
-            await queue_service.add_to_queue(data)
-            
-            # Envia mensagem de confirmação imediata
-            await ZAPIService.send_text(
-                phone=data['phone'],
-                message="Recebi seu áudio! Estou processando e já te respondo..."
-            )
-            
-            return JSONResponse({
-                "status": "processing",
-                "message": "Audio message queued for processing"
-            })
-
         # Verifica se é uma mensagem
         if 'messages' in data:
             message = data['messages'][0]
             phone = message['from']
             
-            # Processa áudio se for mensagem de áudio
+            # Processa baseado no tipo de mensagem
             if message['type'] == 'audio':
-                text = whisper_service.transcribe_audio(message['audio']['url'])
-                message['transcript'] = text
-            
-            # Envia para Zaia
-            zaia_response = await ZaiaService.send_message(message)
-            
-            # Gera resposta em áudio se a mensagem original era áudio
-            if message['type'] == 'audio':
+                # 1. Transcreve o áudio
+                transcript = await whisper_service.transcribe_audio(message['audio']['url'])
+                logger.info(f"Áudio transcrito: {transcript}")
+                
+                # 2. Envia transcrição para Zaia
+                zaia_response = await zaia_service.send_message({
+                    'transcript': transcript,
+                    'phone': phone
+                })
+                
+                # 3. Gera resposta em áudio usando voz clonada
                 audio_bytes = elevenlabs_service.generate_audio(zaia_response['message'])
+                
+                # 4. Envia resposta em áudio
                 await ZAPIService.send_audio(phone, audio_bytes)
-            else:
+                
+            elif message['type'] == 'text':
+                # 1. Envia texto para Zaia
+                zaia_response = await zaia_service.send_message({
+                    'text': {'body': message['text']['body']},
+                    'phone': phone
+                })
+                
+                # 2. Envia resposta em texto
                 await ZAPIService.send_text(phone, zaia_response['message'])
             
             return JSONResponse({"status": "success"})
         
         # Verifica se é uma notificação de status
         elif 'status' in data:
-            # Processa status da mensagem (entregue, lida, etc)
             logger.info(f"Status update: {data['status']}")
             return JSONResponse({"status": "success"})
         
         # Verifica se é uma notificação de desconexão
         elif 'connected' in data and not data['connected']:
-            # Processa desconexão
             logger.info("Z-API disconnected")
             return JSONResponse({"status": "success"})
             

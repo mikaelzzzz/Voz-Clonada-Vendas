@@ -61,6 +61,12 @@ class ZaiaService:
     async def send_message(message: dict):
         """
         Envia mensagem para a Zaia e retorna a resposta, garantindo que o chat existe.
+        
+        Args:
+            message: Dicionário contendo:
+                - text.body: Texto da mensagem (para mensagens de texto)
+                - transcript: Texto transcrito (para mensagens de áudio)
+                - phone: Número do telefone do usuário
         """
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
         agent_id = settings.ZAIA_AGENT_ID
@@ -70,15 +76,23 @@ class ZaiaService:
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
+        
         # Extrai o texto da mensagem
-        message_text = message['text']['body'] if 'text' in message else message['transcript']
-        phone = message.get('phone') or message.get('from') or message.get('chat_id') or message.get('externalId')
+        message_text = message.get('transcript') or message.get('text', {}).get('body')
+        if not message_text:
+            raise Exception("Texto da mensagem não encontrado")
+            
+        phone = message.get('phone')
         if not phone:
-            raise Exception("Telefone (phone) não informado na mensagem para Zaia.")
+            raise Exception("Telefone não informado na mensagem para Zaia.")
+            
         # 1. Garante que o chat existe
         chat_id = await ZaiaService.get_or_create_chat(phone)
+        
         # 2. Detecta a intenção
-        intent = await IntentService.detect_intent(message_text, chat_id)
+        intent_service = IntentService()
+        intent = await intent_service.detect_intent(message_text, chat_id)
+        
         # 3. Monta o payload
         payload = {
             "agentId": agent_id,
@@ -87,12 +101,18 @@ class ZaiaService:
             "custom": {"whatsapp": phone},
             "intent": intent
         }
+        
         url_message = f"{base_url}/v1.1/api/external-generative-message/create"
         async with aiohttp.ClientSession() as session:
             try:
                 logger.info(f"Enviando mensagem para Zaia. URL: {url_message}")
                 logger.info(f"Payload: {payload}")
                 async with session.post(url_message, headers=headers, json=payload) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"Erro ao enviar mensagem: Status={response.status}, Response={error_text}")
+                        raise Exception(f"Erro ao enviar mensagem: {error_text}")
+                        
                     response_json = await response.json()
                     logger.info(f"Resposta da Zaia: {response_json}")
                     response_json['detected_intent'] = intent
