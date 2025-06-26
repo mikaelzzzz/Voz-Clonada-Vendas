@@ -12,9 +12,10 @@ class ZaiaService:
     async def get_or_create_chat(phone: str):
         """
         Cria um chat na Zaia usando externalId (telefone) ou recupera se já existir.
+        Cada número de telefone terá seu próprio chat individual.
         Retorna o chat_id.
         """
-        logger.info(f"Iniciando get_or_create_chat para telefone: {phone}")
+        logger.info(f"=== INICIANDO get_or_create_chat para telefone: {phone} ===")
         
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
         agent_id = settings.ZAIA_AGENT_ID
@@ -36,49 +37,70 @@ class ZaiaService:
             "Accept": "application/json"
         }
         
-        # 1. Tenta criar o chat
-        payload = {
-            "agentId": int(agent_id),  # Converte para inteiro
-            "externalId": phone
-        }
-        create_url = f"{base_url}/v1.1/api/external-generative-chat/create"
-        
-        logger.info(f"Tentando criar chat - URL: {create_url}")
-        logger.info(f"Payload: {payload}")
+        # 1. Primeiro, tenta buscar se já existe um chat para este número
+        retrieve_url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple?agentIds={agent_id}&externalIds={phone}"
+        logger.info(f"🔍 BUSCANDO chat existente - URL: {retrieve_url}")
         
         async with aiohttp.ClientSession() as session:
             try:
+                async with session.get(retrieve_url, headers=headers) as get_resp:
+                    logger.info(f"📋 Resposta da busca - Status: {get_resp.status}")
+                    
+                    if get_resp.status == 200:
+                        get_data = await get_resp.json()
+                        logger.info(f"📋 Dados da busca completos: {get_data}")
+                        
+                        chats = get_data.get("externalGenerativeChats", [])
+                        if chats:
+                            existing_chat_id = chats[0]["id"]
+                            logger.info(f"✅ CHAT EXISTENTE ENCONTRADO para {phone} - Chat ID: {existing_chat_id}")
+                            return existing_chat_id
+                        else:
+                            logger.info(f"❌ Nenhum chat existente encontrado para {phone}")
+                    else:
+                        logger.warning(f"⚠️  Erro na busca de chat existente: Status {get_resp.status}")
+                
+                # 2. Se não encontrou, cria um novo chat
+                payload = {
+                    "agentId": int(agent_id),  # Converte para inteiro
+                    "externalId": phone
+                }
+                create_url = f"{base_url}/v1.1/api/external-generative-chat/create"
+                
+                logger.info(f"🆕 CRIANDO NOVO CHAT - URL: {create_url}")
+                logger.info(f"🆕 Payload: {payload}")
+                
                 async with session.post(create_url, headers=headers, json=payload) as resp:
-                    logger.info(f"Resposta do create chat - Status: {resp.status}")
+                    logger.info(f"🆕 Resposta da criação - Status: {resp.status}")
                     
                     if resp.status == 200:
                         data = await resp.json()
-                        logger.info(f"Chat criado na Zaia: {data}")
-                        return data["id"]
+                        new_chat_id = data["id"]
+                        logger.info(f"✅ NOVO CHAT CRIADO para {phone} - Chat ID: {new_chat_id}")
+                        logger.info(f"✅ Dados completos do novo chat: {data}")
+                        return new_chat_id
                     elif resp.status == 409:
-                        # Chat já existe, buscar pelo externalId
-                        logger.info(f"Chat já existe para {phone}, buscando...")
-                        retrieve_url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple?agentIds={agent_id}&externalIds={phone}"
-                        logger.info(f"URL de busca: {retrieve_url}")
+                        # Chat foi criado entre a busca e a criação (race condition)
+                        logger.info(f"🔄 Chat foi criado por outra requisição, buscando novamente...")
                         
-                        async with session.get(retrieve_url, headers=headers) as get_resp:
-                            logger.info(f"Resposta da busca - Status: {get_resp.status}")
-                            get_data = await get_resp.json()
-                            logger.info(f"Dados da busca: {get_data}")
-                            
-                            chats = get_data.get("externalGenerativeChats", [])
-                            if chats:
-                                logger.info(f"Chat recuperado: {chats[0]}")
-                                return chats[0]["id"]
-                            else:
-                                logger.error(f"Nenhum chat encontrado para {phone}")
-                                raise Exception("Nenhum chat encontrado para o telefone informado.")
+                        async with session.get(retrieve_url, headers=headers) as get_resp2:
+                            if get_resp2.status == 200:
+                                get_data2 = await get_resp2.json()
+                                chats2 = get_data2.get("externalGenerativeChats", [])
+                                if chats2:
+                                    race_chat_id = chats2[0]["id"]
+                                    logger.info(f"✅ CHAT RECUPERADO após race condition para {phone} - Chat ID: {race_chat_id}")
+                                    return race_chat_id
+                        
+                        logger.error(f"❌ Falha ao recuperar chat após race condition para {phone}")
+                        raise Exception("Falha ao recuperar chat após conflito de criação")
                     else:
                         error_text = await resp.text()
-                        logger.error(f"Erro ao criar chat: Status={resp.status}, Response={error_text}")
+                        logger.error(f"❌ Erro ao criar chat: Status={resp.status}, Response={error_text}")
                         raise Exception(f"Erro ao criar chat: Status {resp.status} - {error_text}")
+                        
             except Exception as e:
-                logger.error(f"Erro em get_or_create_chat: {str(e)}")
+                logger.error(f"❌ Erro em get_or_create_chat para {phone}: {str(e)}")
                 raise
 
     @staticmethod
@@ -93,7 +115,8 @@ class ZaiaService:
                 - transcript: Texto transcrito (para mensagens de áudio)
                 - phone: Número do telefone do usuário
         """
-        logger.info(f"Iniciando send_message com dados: {message}")
+        logger.info(f"=== INICIANDO send_message ===")
+        logger.info(f"📨 Dados da mensagem: {message}")
         
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
         agent_id = settings.ZAIA_AGENT_ID
@@ -108,21 +131,21 @@ class ZaiaService:
         # Extrai o texto da mensagem
         message_text = message.get('transcript') or message.get('text', {}).get('body')
         if not message_text:
-            logger.error("Texto da mensagem não encontrado")
+            logger.error("❌ Texto da mensagem não encontrado")
             raise Exception("Texto da mensagem não encontrado")
             
         phone = message.get('phone')
         if not phone:
-            logger.error("Telefone não informado na mensagem")
+            logger.error("❌ Telefone não informado na mensagem")
             raise Exception("Telefone não informado na mensagem para Zaia.")
             
-        logger.info(f"Processando mensagem: '{message_text}' do telefone: {phone}")
+        logger.info(f"📱 Processando mensagem: '{message_text}' do telefone: {phone}")
         
         try:
-            # 1. Garante que o chat existe
-            logger.info("Obtendo ou criando chat...")
+            # 1. Garante que o chat existe para este número específico
+            logger.info(f"🔄 Obtendo chat individual para {phone}...")
             chat_id = await ZaiaService.get_or_create_chat(phone)
-            logger.info(f"Chat ID obtido: {chat_id}")
+            logger.info(f"✅ Chat ID obtido para {phone}: {chat_id}")
             
             # 2. Monta o payload (Zaia detecta intenções automaticamente)
             payload = {
@@ -133,22 +156,23 @@ class ZaiaService:
             }
             
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
-            logger.info(f"Enviando mensagem para Zaia - URL: {url_message}")
-            logger.info(f"Payload completo: {payload}")
+            logger.info(f"📤 Enviando mensagem para Zaia - URL: {url_message}")
+            logger.info(f"📤 Chat ID usado: {chat_id} (para telefone: {phone})")
+            logger.info(f"📤 Payload completo: {payload}")
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(url_message, headers=headers, json=payload) as response:
-                    logger.info(f"Resposta da Zaia - Status: {response.status}")
+                    logger.info(f"📥 Resposta da Zaia - Status: {response.status}")
                     
                     if response.status != 200:
                         error_text = await response.text()
-                        logger.error(f"Erro ao enviar mensagem: Status={response.status}, Response={error_text}")
+                        logger.error(f"❌ Erro ao enviar mensagem: Status={response.status}, Response={error_text}")
                         raise Exception(f"Erro ao enviar mensagem: Status {response.status} - {error_text}")
                         
                     response_json = await response.json()
-                    logger.info(f"Resposta da Zaia (JSON): {response_json}")
+                    logger.info(f"✅ Resposta da Zaia para {phone} (Chat {chat_id}): {response_json}")
                     return response_json
                     
         except Exception as e:
-            logger.error(f"Erro ao enviar mensagem para Zaia: {str(e)}")
+            logger.error(f"❌ Erro ao enviar mensagem para Zaia (telefone: {phone}): {str(e)}")
             raise 
