@@ -49,9 +49,9 @@ async def handle_webhook(request: Request):
                     logger.info(f"Resposta da Zaia recebida: {zaia_response}")
                     
                     # 3. Verifica se há mensagem na resposta
-                    if 'message' in zaia_response and zaia_response['message']:
+                    if 'text' in zaia_response and zaia_response['text']:
                         # 4. Gera resposta em áudio usando voz clonada
-                        audio_bytes = elevenlabs_service.generate_audio(zaia_response['message'])
+                        audio_bytes = elevenlabs_service.generate_audio(zaia_response['text'])
                         
                         # 5. Envia resposta em áudio
                         await ZAPIService.send_audio(phone, audio_bytes)
@@ -77,9 +77,9 @@ async def handle_webhook(request: Request):
                     logger.info(f"Resposta da Zaia recebida: {zaia_response}")
                     
                     # 2. Verifica se há mensagem na resposta
-                    if 'message' in zaia_response and zaia_response['message']:
+                    if 'text' in zaia_response and zaia_response['text']:
                         # 3. Envia resposta em texto
-                        await ZAPIService.send_text(phone, zaia_response['message'])
+                        await ZAPIService.send_text(phone, zaia_response['text'])
                         logger.info(f"Texto enviado para {phone}")
                     else:
                         logger.warning(f"Zaia não retornou mensagem válida: {zaia_response}")
@@ -116,9 +116,9 @@ async def handle_webhook(request: Request):
                     logger.info(f"Resposta da Zaia recebida: {zaia_response}")
                     
                     # 3. Verifica se há mensagem na resposta
-                    if 'message' in zaia_response and zaia_response['message']:
+                    if 'text' in zaia_response and zaia_response['text']:
                         # 4. Gera resposta em áudio usando voz clonada
-                        audio_bytes = elevenlabs_service.generate_audio(zaia_response['message'])
+                        audio_bytes = elevenlabs_service.generate_audio(zaia_response['text'])
                         
                         # 5. Envia resposta em áudio
                         await ZAPIService.send_audio(phone, audio_bytes)
@@ -143,9 +143,9 @@ async def handle_webhook(request: Request):
                     logger.info(f"Resposta da Zaia recebida: {zaia_response}")
                     
                     # 2. Verifica se há mensagem na resposta
-                    if 'message' in zaia_response and zaia_response['message']:
+                    if 'text' in zaia_response and zaia_response['text']:
                         # 3. Envia resposta em texto
-                        await ZAPIService.send_text(phone, zaia_response['message'])
+                        await ZAPIService.send_text(phone, zaia_response['text'])
                         logger.info(f"Texto enviado para {phone}")
                     else:
                         logger.warning(f"Zaia não retornou mensagem válida: {zaia_response}")
