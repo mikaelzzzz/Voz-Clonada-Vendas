@@ -39,19 +39,19 @@ class ZaiaService:
             "Accept": "application/json"
         }
         
-        # Buscar chat existente com paginação
-        page = 0
+        # Buscar chat existente com paginação correta
+        limit = 50  # Quantidade por página
+        offset = 0
+        
         while True:
             url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple"
             params = {
-                "agentIds": str(agent_id),
-                "externalIds": phone
+                "agentIds": [int(agent_id)],  # Array de números conforme documentação
+                "limit": limit,
+                "offset": offset
             }
-            
-            if page > 0:
-                params["page"] = page
                 
-            logger.info(f"🔍 BUSCANDO chat existente (página {page}) - URL: {url}")
+            logger.info(f"🔍 BUSCANDO chat existente (offset {offset}) - URL: {url}")
             logger.info(f"🔍 Parâmetros: {params}")
             
             response = requests.get(url, params=params, headers=headers)
@@ -62,10 +62,15 @@ class ZaiaService:
                 break
                 
             data = response.json()
-            logger.info(f"📋 Dados da busca (página {page}): {data}")
+            logger.info(f"📋 Dados da busca (offset {offset}): {data}")
+            
+            chats = data.get("externalGenerativeChats", [])
+            if not chats:
+                logger.info(f"📄 Nenhum chat encontrado no offset {offset}")
+                break
             
             # Procurar por chat do WhatsApp ativo
-            for chat in data.get("externalGenerativeChats", []):
+            for chat in chats:
                 chat_id = chat.get("id")
                 phone = chat.get("phoneNumber")
                 channel = chat.get("channel")
@@ -81,14 +86,14 @@ class ZaiaService:
                     logger.info(f"✅ Chat details: {chat}")
                     return chat_id
             
-            # Verificar se há mais páginas
-            if not data.get("hasNextPage", False):
-                logger.info(f"📄 Fim da paginação - não há mais páginas")
+            # Verificar se há mais páginas baseado na quantidade retornada
+            if len(chats) < limit:
+                logger.info(f"📄 Fim da paginação - retornados {len(chats)} chats (menos que limit {limit})")
                 break
                 
-            page += 1
-            if page > 5:  # Limite de segurança para evitar loops infinitos
-                logger.warning(f"⚠️ Limite de páginas atingido (5), parando busca")
+            offset += limit
+            if offset > 1000:  # Limite de segurança para evitar loops infinitos
+                logger.warning(f"⚠️ Limite de offset atingido (1000), parando busca")
                 break
         
         # Se não encontrou, criar novo chat
@@ -126,7 +131,10 @@ class ZaiaService:
             
             response = requests.get(
                 f"{self.base_url}/v1.1/api/external-generative-chat/retrieve-multiple",
-                params={"agentIds": str(self.agent_id), "externalIds": phone_number},
+                params={
+                    "agentIds": [int(self.agent_id)],
+                    "limit": 100  # Buscar mais chats na recuperação pós-race condition
+                },
                 headers=self.headers
             )
             
@@ -198,6 +206,8 @@ class ZaiaService:
                 "agentId": int(agent_id),  # Converte para inteiro
                 "externalGenerativeChatId": chat_id,
                 "prompt": message_text,
+                "streaming": False,  # Resposta síncrona
+                "asMarkdown": False,  # Texto puro, não markdown
                 "custom": {"whatsapp": phone}
             }
             
