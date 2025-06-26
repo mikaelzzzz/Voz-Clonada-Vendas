@@ -1,13 +1,12 @@
 import logging
 import aiohttp
 from app.config import settings
-from app.services.intent_service import IntentService
 
 logger = logging.getLogger(__name__)
 
 class ZaiaService:
     def __init__(self):
-        self.intent_service = IntentService()
+        pass  # Removido IntentService - Zaia detecta intenções automaticamente
 
     @staticmethod
     async def get_or_create_chat(phone: str):
@@ -86,6 +85,7 @@ class ZaiaService:
     async def send_message(message: dict):
         """
         Envia mensagem para a Zaia e retorna a resposta, garantindo que o chat existe.
+        A Zaia detecta automaticamente a intenção do usuário.
         
         Args:
             message: Dicionário contendo:
@@ -124,19 +124,12 @@ class ZaiaService:
             chat_id = await ZaiaService.get_or_create_chat(phone)
             logger.info(f"Chat ID obtido: {chat_id}")
             
-            # 2. Detecta a intenção
-            logger.info("Detectando intenção...")
-            intent_service = IntentService()
-            intent = await intent_service.detect_intent(message_text, chat_id)
-            logger.info(f"Intenção detectada: {intent}")
-            
-            # 3. Monta o payload
+            # 2. Monta o payload (Zaia detecta intenções automaticamente)
             payload = {
                 "agentId": int(agent_id),  # Converte para inteiro
                 "externalGenerativeChatId": chat_id,
                 "prompt": message_text,
-                "custom": {"whatsapp": phone},
-                "intent": intent
+                "custom": {"whatsapp": phone}
             }
             
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
@@ -154,7 +147,6 @@ class ZaiaService:
                         
                     response_json = await response.json()
                     logger.info(f"Resposta da Zaia (JSON): {response_json}")
-                    response_json['detected_intent'] = intent
                     return response_json
                     
         except Exception as e:
