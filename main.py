@@ -41,7 +41,7 @@ import tempfile
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-from elevenlabs.client import ElevenLabs
+from elevenlabs import generate
 from app.config import settings
 from app.routes.webhook_routes import router as webhook_router
 
@@ -158,23 +158,19 @@ def generate_audio_response(text):
     """
     Gera resposta em áudio usando ElevenLabs e retorna os bytes do áudio
     """
-    audio = eleven_client.generate(
+    audio = generate(
         text=text,
         voice=VOICE_ID,
-        model="eleven_multilingual_v2"
+        model="eleven_multilingual_v2",
+        api_key=ELEVEN_API_KEY
     )
     
     # Converte o áudio para bytes
     if isinstance(audio, bytes):
         return audio
     else:
-        # Se o áudio não for bytes, salva temporariamente e lê os bytes
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio:
-            eleven_client.save(audio, temp_audio.name)
-            with open(temp_audio.name, 'rb') as f:
-                audio_bytes = f.read()
-            os.unlink(temp_audio.name)
-            return audio_bytes
+        # Se o áudio não for bytes, converte para bytes
+        return bytes(audio)
 
 # Environment variables
 ELEVEN_API_KEY = os.getenv("ELEVENLABS_API_KEY")
@@ -186,7 +182,7 @@ SIMILARITY = float(os.getenv("SIMILARITY", "0.8"))
 # Zaia Configuration
 ZAIA_API_KEY = os.getenv("ZAIA_API_KEY")
 ZAIA_AGENT_ID = os.getenv("ZAIA_AGENT_ID")
-ZAIA_API_URL = "https://core-service.zaia.app/v1.1/api/message-cross-channel/create"
+ZAIA_API_URL = f"{settings.ZAIA_BASE_URL}/v1.1/api/message-cross-channel/create"
 
 # OpenAI Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -198,8 +194,7 @@ Z_API_ID = os.getenv("Z_API_ID")
 Z_API_TOKEN = os.getenv("Z_API_TOKEN")
 Z_API_SECURITY_TOKEN = os.getenv("Z_API_SECURITY_TOKEN")
 
-# Configuração do ElevenLabs
-eleven_client = ElevenLabs(api_key=ELEVEN_API_KEY)
+# ElevenLabs configuration is handled via environment variable
 
 if not all([ELEVEN_API_KEY, VOICE_ID, ZAIA_API_KEY, ZAIA_AGENT_ID, Z_API_ID, Z_API_TOKEN, Z_API_SECURITY_TOKEN]):
     raise ValueError("Missing required environment variables. Check .env file.")
