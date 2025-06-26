@@ -39,7 +39,7 @@ class ZaiaService:
         
         # 1. Tenta criar o chat
         payload = {
-            "agentId": agent_id,
+            "agentId": int(agent_id),  # Converte para inteiro
             "externalId": phone
         }
         create_url = f"{base_url}/v1.1/api/external-generative-chat/create"
@@ -132,7 +132,7 @@ class ZaiaService:
             
             # 3. Monta o payload
             payload = {
-                "agentId": agent_id,
+                "agentId": int(agent_id),  # Converte para inteiro
                 "externalGenerativeChatId": chat_id,
                 "prompt": message_text,
                 "custom": {"whatsapp": phone},
