@@ -186,7 +186,7 @@ class ZaiaService:
             logger.info(f"🆕 Resposta da criação - Status: {response.status_code}")
             logger.info(f"🆕 Resposta completa: {response.text}")
             
-            if response.status_code == 201:
+            if response.status_code in [200, 201]:  # Aceitar tanto 200 quanto 201
                 chat_data = response.json()
                 chat_id = chat_data.get("id")
                 logger.info(f"✅ NOVO CHAT CRIADO para {phone} - Chat ID: {chat_id}, External ID: {external_id}")
@@ -211,8 +211,9 @@ class ZaiaService:
                 
                 response2 = requests.post(url, json=simple_payload, headers=headers, timeout=10)
                 logger.info(f"🆕 Resposta da criação simples - Status: {response2.status_code}")
+                logger.info(f"🆕 Resposta completa simples: {response2.text}")
                 
-                if response2.status_code == 201:
+                if response2.status_code in [200, 201]:  # Aceitar tanto 200 quanto 201
                     chat_data = response2.json()
                     chat_id = chat_data.get("id")
                     logger.info(f"✅ NOVO CHAT CRIADO (simples) para {phone} - Chat ID: {chat_id}")
