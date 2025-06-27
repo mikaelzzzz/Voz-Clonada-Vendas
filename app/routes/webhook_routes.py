@@ -5,7 +5,8 @@ from app.services.z_api_service import ZAPIService
 from app.services.zaia_service import ZaiaService
 from app.services.elevenlabs_service import ElevenLabsService
 from app.services.whisper_service import WhisperService
-from app.services.queue_service import queue_service
+from app.services.queue_service import queue_service, QueueService
+from app.services.cache_service import CacheService
 
 logger = logging.getLogger(__name__)
 
@@ -176,8 +177,41 @@ async def handle_webhook(request: Request):
         }, status_code=500)
 
 @router.get("/health")
-def health_check():
-    """
-    Endpoint para verificar se o servidor está funcionando
-    """
-    return {"status": "healthy"} 
+async def health_check():
+    """Endpoint de health check para verificar status do serviço e Redis"""
+    try:
+        # Verificar Redis se habilitado
+        redis_status = "disabled"
+        if CacheService.get_client():
+            redis_status = "connected"
+        else:
+            redis_status = "not_available"
+        
+        return {
+            "status": "healthy",
+            "redis": redis_status,
+            "message": "Serviço funcionando corretamente"
+        }
+    except Exception as e:
+        logger.error(f"Health check falhou: {str(e)}")
+        return {
+            "status": "unhealthy",
+            "redis": "error",
+            "message": str(e)
+        }
+
+@router.post("/webhook")
+async def webhook(request: Request):
+    """Webhook para receber mensagens do Z-API"""
+    try:
+        data = await request.json()
+        logger.info(f"Webhook recebido: {data}")
+        
+        # Processar mensagem em background
+        await QueueService.process_message(data)
+        
+        return {"status": "success"}
+        
+    except Exception as e:
+        logger.error(f"Erro no webhook: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e)) 

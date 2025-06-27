@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings
 
 # Carrega variáveis de ambiente
 load_dotenv()
@@ -29,4 +30,34 @@ CLOUDINARY_CONFIG = {
 Z_API_BASE_URL = f"https://api.z-api.io/instances/{Z_API_ID}/token/{Z_API_TOKEN}"
 
 # Configurações do servidor
-PORT = int(os.getenv('PORT', 5000)) 
+PORT = int(os.getenv('PORT', 5000))
+
+class Settings(BaseSettings):
+    # Configurações da aplicação
+    DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
+    
+    # Configurações do Z-API
+    Z_API_INSTANCE_ID: str = os.getenv("Z_API_INSTANCE_ID", "")
+    Z_API_TOKEN: str = os.getenv("Z_API_TOKEN", "")
+    Z_API_BASE_URL: str = "https://api.z-api.io"
+    
+    # Configurações da Zaia
+    ZAIA_BASE_URL: str = os.getenv("ZAIA_BASE_URL", "https://api.zaia.app")
+    ZAIA_API_KEY: str = os.getenv("ZAIA_API_KEY", "")
+    ZAIA_AGENT_ID: str = os.getenv("ZAIA_AGENT_ID", "")
+    
+    # Configurações do OpenAI
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    
+    # Configurações do ElevenLabs
+    ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
+    ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "cgSgspJ2msm6clMCkdW9")
+    
+    # Configurações do Redis para cache distribuído
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "False").lower() == "true"
+    
+    class Config:
+        env_file = ".env"
+
+settings = Settings() 

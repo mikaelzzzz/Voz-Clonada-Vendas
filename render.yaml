@@ -11,4 +11,9 @@ services:
       - key: WEB_CONCURRENCY
         value: 4
     healthCheckPath: /health
-    autoDeploy: true 
+    autoDeploy: true
+
+  - type: redis
+    name: voz-clonada-redis
+    ipAllowList: []
+    plan: free 

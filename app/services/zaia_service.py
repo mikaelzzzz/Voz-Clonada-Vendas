@@ -1,6 +1,7 @@
 import logging
 import aiohttp
 from app.config import settings
+from app.services.cache_service import CacheService
 import requests
 import time
 
@@ -14,14 +15,16 @@ class ZaiaService:
         pass  # Removido IntentService - Zaia detecta intenções automaticamente
     
     @staticmethod
-    def clear_chat_cache(phone: str = None):
+    async def clear_chat_cache(phone: str = None):
         """
         Limpa o cache de chats. Se phone for especificado, limpa apenas para esse telefone.
         """
         if phone:
+            await CacheService.clear_chat_id(phone)
             ZaiaService._chat_cache.pop(phone, None)
             logger.info(f"🗑️ Cache limpo para {phone}")
         else:
+            await CacheService.clear_all_chats()
             ZaiaService._chat_cache.clear()
             logger.info(f"🗑️ Cache completo limpo")
 
@@ -54,8 +57,12 @@ class ZaiaService:
             "Accept": "application/json"
         }
         
-        # Estratégia 1: Verificar cache local
-        cached_chat_id = ZaiaService._chat_cache.get(phone)
+        # Estratégia 1: Verificar cache Redis/local
+        cached_chat_id = await CacheService.get_chat_id(phone)
+        if not cached_chat_id:
+            # Fallback para cache local se Redis não estiver disponível
+            cached_chat_id = ZaiaService._chat_cache.get(phone)
+        
         if cached_chat_id:
             logger.info(f"🔄 Usando chat do cache para {phone}: {cached_chat_id}")
             return cached_chat_id
@@ -66,14 +73,16 @@ class ZaiaService:
         
         if last_chat_id:
             logger.info(f"✅ ÚLTIMO CHAT ENCONTRADO para {phone} - Chat ID: {last_chat_id}")
-            # Atualizar cache
+            # Atualizar cache Redis e local
+            await CacheService.set_chat_id(phone, last_chat_id)
             ZaiaService._chat_cache[phone] = last_chat_id
             return last_chat_id
         
         # Estratégia 3: Criar novo chat se nenhum foi encontrado
         logger.info(f"🆕 Nenhum chat existente, criando novo para {phone}")
         new_chat_id = await ZaiaService._create_new_chat(base_url, headers, agent_id, phone)
-        # Atualizar cache
+        # Atualizar cache Redis e local
+        await CacheService.set_chat_id(phone, new_chat_id)
         ZaiaService._chat_cache[phone] = new_chat_id
         return new_chat_id
 
@@ -285,6 +294,7 @@ class ZaiaService:
                             response_chat_id = response_json.get('externalGenerativeChatId')
                             if response_chat_id and response_chat_id != chat_id:
                                 logger.info(f"🔄 Atualizando cache: Chat ID {chat_id} → {response_chat_id} para {phone}")
+                                await CacheService.set_chat_id(phone, response_chat_id)
                                 ZaiaService._chat_cache[phone] = response_chat_id
                             
                             return response_json
