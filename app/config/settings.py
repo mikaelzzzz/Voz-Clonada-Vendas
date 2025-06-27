@@ -39,7 +39,8 @@ class Settings(BaseSettings):
     # Configurações do Z-API
     Z_API_INSTANCE_ID: str = os.getenv("Z_API_INSTANCE_ID", "")
     Z_API_TOKEN: str = os.getenv("Z_API_TOKEN", "")
-    Z_API_BASE_URL: str = "https://api.z-api.io"
+    Z_API_SECURITY_TOKEN: str = os.getenv("Z_API_SECURITY_TOKEN", "")
+    Z_API_BASE_URL: str = f"https://api.z-api.io/instances/{os.getenv('Z_API_ID', '')}/token/{os.getenv('Z_API_TOKEN', '')}"
     
     # Configurações da Zaia
     ZAIA_BASE_URL: str = os.getenv("ZAIA_BASE_URL", "https://api.zaia.app")
@@ -52,6 +53,11 @@ class Settings(BaseSettings):
     # Configurações do ElevenLabs
     ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
     ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "cgSgspJ2msm6clMCkdW9")
+    
+    # Configurações do Cloudinary
+    CLOUDINARY_CLOUD_NAME: str = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+    CLOUDINARY_API_KEY: str = os.getenv("CLOUDINARY_API_KEY", "")
+    CLOUDINARY_API_SECRET: str = os.getenv("CLOUDINARY_API_SECRET", "")
     
     # Compatibilidade com código legado
     @property
