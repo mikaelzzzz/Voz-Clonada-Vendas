@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
     ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "cgSgspJ2msm6clMCkdW9")
     
+    # Compatibilidade com código legado
+    @property
+    def VOICE_ID(self) -> str:
+        return self.ELEVENLABS_VOICE_ID
+    
     # Configurações do Redis para cache distribuído
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "False").lower() == "true"

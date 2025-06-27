@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 class ElevenLabsService:
     def __init__(self):
         self.api_key = settings.ELEVENLABS_API_KEY
-        self.voice_id = settings.VOICE_ID
+        self.voice_id = settings.ELEVENLABS_VOICE_ID
         self.model_id = "eleven_multilingual_v2"
         
         # Configurações otimizadas para português brasileiro
