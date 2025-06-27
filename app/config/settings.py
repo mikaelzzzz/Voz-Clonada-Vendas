@@ -7,7 +7,7 @@ load_dotenv()
 
 # ElevenLabs
 ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
-VOICE_ID = os.getenv('VOICE_ID')
+VOICE_ID = os.getenv('VOICE_ID', 'ie5yJLYeLpsuijLaojmF')
 
 # Zaia
 ZAIA_API_KEY = os.getenv('ZAIA_API_KEY')
@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     
     # Configurações do ElevenLabs
     ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
-    ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "cgSgspJ2msm6clMCkdW9")
+    ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "ie5yJLYeLpsuijLaojmF")
     
     # Configurações do Cloudinary
     CLOUDINARY_CLOUD_NAME: str = os.getenv("CLOUDINARY_CLOUD_NAME", "")
