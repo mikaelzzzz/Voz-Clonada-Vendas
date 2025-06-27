@@ -54,25 +54,24 @@ class ZaiaService:
             "Accept": "application/json"
         }
         
-        # Primeiro verifica cache
+        # Estratégia 1: Verificar cache local
         cached_chat_id = ZaiaService._chat_cache.get(phone)
         if cached_chat_id:
             logger.info(f"🔄 Usando chat do cache para {phone}: {cached_chat_id}")
-            # Não verificamos mais porque a Zaia pode não expor o chat recém-criado na rota de retrieve.
-            # Caso o chat não funcione, o próprio endpoint de envio retornará 404 e iremos lidar lá.
             return cached_chat_id
         
-        # Busca chat existente na API
-        chat_id = await ZaiaService._find_existing_chat(base_url, headers, agent_id, phone)
+        # Estratégia 2: Buscar último chat usado por este telefone
+        logger.info(f"🔍 Cache vazio, buscando último chat usado para {phone}")
+        last_chat_id = await ZaiaService.find_last_chat_by_phone(phone)
         
-        if chat_id:
-            logger.info(f"✅ CHAT EXISTENTE ENCONTRADO para {phone} - Chat ID: {chat_id}")
+        if last_chat_id:
+            logger.info(f"✅ ÚLTIMO CHAT ENCONTRADO para {phone} - Chat ID: {last_chat_id}")
             # Atualizar cache
-            ZaiaService._chat_cache[phone] = chat_id
-            return chat_id
+            ZaiaService._chat_cache[phone] = last_chat_id
+            return last_chat_id
         
-        # Se não encontrou, cria novo chat
-        logger.info(f"🆕 Criando novo chat para {phone}")
+        # Estratégia 3: Criar novo chat se nenhum foi encontrado
+        logger.info(f"🆕 Nenhum chat existente, criando novo para {phone}")
         new_chat_id = await ZaiaService._create_new_chat(base_url, headers, agent_id, phone)
         # Atualizar cache
         ZaiaService._chat_cache[phone] = new_chat_id
@@ -81,92 +80,66 @@ class ZaiaService:
     @staticmethod
     async def _find_existing_chat(base_url: str, headers: dict, agent_id: str, phone: str) -> int:
         """
-        Busca chat existente para o telefone usando diferentes estratégias.
-        Verifica se o chat encontrado está realmente funcional.
+        Busca chat existente para o telefone usando a API correta da Zaia.
+        Usa o endpoint retrieve-multiple com filtros adequados.
         """
         logger.info(f"🔍 BUSCANDO chat existente para {phone}")
         
-        # Buscar com paginação otimizada
-        limit = 100
-        offset = 0
-        max_pages = 3  # Reduzir ainda mais para ser eficiente
-        
-        for page in range(max_pages):
+        try:
+            # Usar o endpoint correto conforme documentação
             url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple"
             params = {
-                "agentIds": [int(agent_id)],
-                "limit": limit,
-                "offset": offset
+                "agentIds": agent_id,  # String, não array
+                "limit": 50,
+                "offset": 0
             }
             
-            logger.info(f"🔍 Página {page + 1}: offset {offset}, limit {limit}")
+            logger.info(f"🔍 Consultando API Zaia: {url}")
+            logger.info(f"🔍 Parâmetros: {params}")
             
-            try:
-                response = requests.get(url, params=params, headers=headers, timeout=10)
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            
+            if response.status_code != 200:
+                logger.error(f"❌ Erro na busca: {response.status_code} - {response.text}")
+                return None
                 
-                if response.status_code != 200:
-                    logger.error(f"❌ Erro na busca: {response.status_code} - {response.text}")
-                    break
+            data = response.json()
+            chats = data.get("externalGenerativeChats", [])
+            
+            if not chats:
+                logger.info(f"📄 Nenhum chat encontrado para o agente {agent_id}")
+                return None
+            
+            logger.info(f"📋 Encontrados {len(chats)} chats, analisando...")
+            
+            # Buscar chat para este telefone específico
+            # Ordenar por data de criação (mais recentes primeiro)
+            chats_sorted = sorted(chats, key=lambda x: x.get('createdAt', ''), reverse=True)
+            
+            for chat in chats_sorted:
+                chat_id = chat.get("id")
+                chat_phone = chat.get("phoneNumber")
+                channel = chat.get("channel")
+                status = chat.get("status")
+                external_id = chat.get("externalId")
+                created_at = chat.get("createdAt")
+                
+                logger.info(f"🔍 Analisando chat {chat_id}: phone={chat_phone}, channel={channel}, status={status}, externalId={external_id}")
+                
+                # Filtrar apenas chats ativos do WhatsApp para este telefone
+                if (status == "active" and 
+                    channel == "whatsapp" and 
+                    chat_phone == phone):
                     
-                data = response.json()
-                chats = data.get("externalGenerativeChats", [])
-                
-                if not chats:
-                    logger.info(f"📄 Nenhum chat encontrado na página {page + 1}")
-                    break
-                
-                logger.info(f"📋 Analisando {len(chats)} chats na página {page + 1}")
-                
-                # Ordenar chats por data de criação (mais recentes primeiro)
-                chats_sorted = sorted(chats, key=lambda x: x.get('createdAt', ''), reverse=True)
-                
-                # Procurar por chat para este telefone - priorizar chats mais recentes
-                for chat in chats_sorted:
-                    chat_id = chat.get("id")
-                    chat_external_id = chat.get("externalId")
-                    chat_phone = chat.get("phoneNumber")
-                    channel = chat.get("channel")
-                    status = chat.get("status")
-                    created_at = chat.get("createdAt")
-                    
-                    # Só considerar chats ativos
-                    if status != "active":
-                        continue
-                    
-                    # Estratégia 1: Buscar por externalId se existir
-                    external_id = f"whatsapp_{phone}"
-                    if chat_external_id == external_id:
-                        logger.info(f"✅ CHAT ENCONTRADO por externalId para {phone} - Chat ID: {chat_id}")
-                        # Verificar se o chat está realmente funcional
-                        if await ZaiaService._verify_chat_functional(base_url, headers, chat_id):
-                            return chat_id
-                        else:
-                            logger.warning(f"⚠️ Chat {chat_id} não está funcional, continuando busca...")
-                            continue
-                    
-                    # Estratégia 2: Buscar por phoneNumber + channel (fallback)
-                    if (chat_phone == phone and channel == "whatsapp"):
-                        logger.info(f"✅ CHAT ENCONTRADO por phoneNumber para {phone} - Chat ID: {chat_id}")
-                        # Verificar se o chat está realmente funcional
-                        if await ZaiaService._verify_chat_functional(base_url, headers, chat_id):
-                            return chat_id
-                        else:
-                            logger.warning(f"⚠️ Chat {chat_id} não está funcional, continuando busca...")
-                            continue
-                
-                # Verificar se há mais páginas
-                if len(chats) < limit:
-                    logger.info(f"📄 Fim da paginação - página {page + 1}")
-                    break
-                    
-                offset += limit
-                
-            except Exception as e:
-                logger.error(f"❌ Erro na busca página {page + 1}: {str(e)}")
-                break
-        
-        logger.info(f"❌ Nenhum chat funcional encontrado para {phone}")
-        return None
+                    logger.info(f"✅ CHAT ENCONTRADO para {phone} - Chat ID: {chat_id} (criado em: {created_at})")
+                    return chat_id
+            
+            logger.info(f"❌ Nenhum chat ativo encontrado para {phone}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Erro na busca de chats: {str(e)}")
+            return None
 
     @staticmethod
     async def _verify_chat_functional(base_url: str, headers: dict, chat_id: int) -> bool:
@@ -196,16 +169,13 @@ class ZaiaService:
     @staticmethod
     async def _create_new_chat(base_url: str, headers: dict, agent_id: str, phone: str) -> int:
         """
-        Cria um novo chat na Zaia para o telefone especificado.
-        Usa payload mínimo para evitar erros de validação.
+        Cria um novo chat na Zaia usando payload mínimo conforme documentação.
         """
         logger.info(f"🆕 CRIANDO NOVO CHAT para {phone}")
         
-        # Payload mínimo conforme documentação
-        external_id = f"whatsapp_{phone}"
+        # Payload mínimo conforme documentação da Zaia
         payload = {
-            "agentId": int(agent_id),
-            "externalId": external_id
+            "agentId": int(agent_id)
         }
         
         url = f"{base_url}/v1.1/api/external-generative-chat/create"
@@ -217,42 +187,11 @@ class ZaiaService:
             logger.info(f"🆕 Resposta da criação - Status: {response.status_code}")
             logger.info(f"🆕 Resposta completa: {response.text}")
             
-            if response.status_code in [200, 201]:  # Aceitar tanto 200 quanto 201
+            if response.status_code in [200, 201]:
                 chat_data = response.json()
                 chat_id = chat_data.get("id")
-                logger.info(f"✅ NOVO CHAT CRIADO para {phone} - Chat ID: {chat_id}, External ID: {external_id}")
+                logger.info(f"✅ NOVO CHAT CRIADO para {phone} - Chat ID: {chat_id}")
                 return chat_id
-                
-            elif response.status_code == 409:
-                # Chat já existe - buscar novamente
-                logger.info(f"🔄 Chat já existe para {phone}, buscando...")
-                time.sleep(0.5)  # Pequeno delay
-                found_chat_id = await ZaiaService._find_existing_chat(base_url, headers, agent_id, phone)
-                if found_chat_id:
-                    return found_chat_id
-                else:
-                    raise Exception(f"Chat não encontrado após conflito para {phone}")
-            
-            elif response.status_code == 422:
-                # Erro de validação - tentar criar sem externalId
-                logger.info(f"🔄 Erro 422, tentando criar chat sem externalId...")
-                simple_payload = {
-                    "agentId": int(agent_id)
-                }
-                
-                response2 = requests.post(url, json=simple_payload, headers=headers, timeout=10)
-                logger.info(f"🆕 Resposta da criação simples - Status: {response2.status_code}")
-                logger.info(f"🆕 Resposta completa simples: {response2.text}")
-                
-                if response2.status_code in [200, 201]:  # Aceitar tanto 200 quanto 201
-                    chat_data = response2.json()
-                    chat_id = chat_data.get("id")
-                    logger.info(f"✅ NOVO CHAT CRIADO (simples) para {phone} - Chat ID: {chat_id}")
-                    return chat_id
-                else:
-                    error_text = response2.text
-                    logger.error(f"❌ Erro ao criar chat simples: {response2.status_code} - {error_text}")
-                    raise Exception(f"Erro ao criar chat: {response2.status_code} - {error_text}")
             else:
                 error_text = response.text
                 logger.error(f"❌ Erro ao criar chat: {response.status_code} - {error_text}")
@@ -372,3 +311,102 @@ class ZaiaService:
                 else:
                     logger.error(f"❌ Erro ao enviar mensagem para Zaia após {attempt + 1} tentativas (telefone: {phone}): {str(e)}")
                     raise 
+
+    @staticmethod
+    async def buscar_historico_zaia(chat_id: int) -> list:
+        """
+        Busca o histórico completo de mensagens de um chat na Zaia.
+        Retorna uma lista de dicionários com origin e text.
+        """
+        base_url = settings.ZAIA_BASE_URL.rstrip("/")
+        api_key = settings.ZAIA_API_KEY
+        
+        url_retrieve = f"{base_url}/v1.1/api/external-generative-message/retrieve-multiple?externalGenerativeChatIds={chat_id}"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url_retrieve, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        chats = data.get("externalGenerativeChats", [])
+                        if chats:
+                            messages = chats[0].get("externalGenerativeMessages", [])
+                            logger.info(f"📜 Encontradas {len(messages)} mensagens no histórico do chat {chat_id}")
+                            return [{"origin": m.get("origin"), "text": m.get("text")} for m in messages]
+                        return []
+                    else:
+                        raw_text = await resp.text()
+                        logger.error(f"❌ Erro ao buscar histórico da Zaia (status {resp.status}): {raw_text}")
+                        return []
+        except Exception as e:
+            logger.error(f"❌ Erro ao buscar histórico do chat {chat_id}: {str(e)}")
+            return [] 
+
+    @staticmethod
+    async def find_last_chat_by_phone(phone: str) -> int:
+        """
+        Encontra o último chat usado por um telefone específico
+        através da busca no histórico de todos os chats.
+        """
+        base_url = settings.ZAIA_BASE_URL.rstrip("/")
+        agent_id = settings.ZAIA_AGENT_ID
+        api_key = settings.ZAIA_API_KEY
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        try:
+            # Buscar todos os chats do agente
+            url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple"
+            params = {
+                "agentIds": agent_id,
+                "limit": 100,
+                "offset": 0
+            }
+            
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            
+            if response.status_code != 200:
+                logger.error(f"❌ Erro na busca de chats: {response.status_code} - {response.text}")
+                return None
+                
+            data = response.json()
+            chats = data.get("externalGenerativeChats", [])
+            
+            if not chats:
+                logger.info(f"📄 Nenhum chat encontrado para busca por histórico")
+                return None
+            
+            # Filtrar chats do WhatsApp para este telefone e ordenar por data
+            phone_chats = []
+            for chat in chats:
+                if (chat.get("channel") == "whatsapp" and 
+                    chat.get("phoneNumber") == phone and
+                    chat.get("status") == "active"):
+                    phone_chats.append(chat)
+            
+            if not phone_chats:
+                logger.info(f"📄 Nenhum chat do WhatsApp encontrado para {phone}")
+                return None
+            
+            # Ordenar por data de criação (mais recente primeiro)
+            phone_chats.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+            
+            # Pegar o chat mais recente
+            latest_chat = phone_chats[0]
+            chat_id = latest_chat.get("id")
+            created_at = latest_chat.get("createdAt")
+            
+            logger.info(f"🎯 Último chat encontrado para {phone}: {chat_id} (criado em: {created_at})")
+            return chat_id
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao buscar último chat por telefone: {str(e)}")
+            return None 
