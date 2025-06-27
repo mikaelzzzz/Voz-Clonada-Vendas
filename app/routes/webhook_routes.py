@@ -12,10 +12,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Instancia os serviços
-elevenlabs_service = ElevenLabsService()
-whisper_service = WhisperService()
-zaia_service = ZaiaService()
+# Serviços serão instanciados quando necessário
 
 @router.post("")
 async def handle_webhook(request: Request):
@@ -38,6 +35,7 @@ async def handle_webhook(request: Request):
                     
                     # 1. Transcreve o áudio
                     audio_url = data['audio']['audioUrl']
+                    whisper_service = WhisperService()
                     transcript = await whisper_service.transcribe_audio(audio_url)
                     logger.info(f"Áudio transcrito: {transcript}")
                     
@@ -46,12 +44,14 @@ async def handle_webhook(request: Request):
                         'transcript': transcript,
                         'phone': phone
                     }
+                    zaia_service = ZaiaService()
                     zaia_response = await zaia_service.send_message(message_data)
                     logger.info(f"Resposta da Zaia recebida: {zaia_response}")
                     
                     # 3. Verifica se há mensagem na resposta
                     if 'text' in zaia_response and zaia_response['text']:
                         # 4. Gera resposta em áudio usando voz clonada
+                        elevenlabs_service = ElevenLabsService()
                         audio_bytes = elevenlabs_service.generate_audio(zaia_response['text'])
                         
                         # 5. Envia resposta em áudio com simulação de gravação
@@ -74,6 +74,7 @@ async def handle_webhook(request: Request):
                         'text': {'body': message_text},
                         'phone': phone
                     }
+                    zaia_service = ZaiaService()
                     zaia_response = await zaia_service.send_message(message_data)
                     logger.info(f"Resposta da Zaia recebida: {zaia_response}")
                     
@@ -105,6 +106,7 @@ async def handle_webhook(request: Request):
                     logger.info(f"Processando mensagem de áudio de {phone} (formato antigo)")
                     
                     # 1. Transcreve o áudio
+                    whisper_service = WhisperService()
                     transcript = await whisper_service.transcribe_audio(message['audio']['url'])
                     logger.info(f"Áudio transcrito: {transcript}")
                     
@@ -113,12 +115,14 @@ async def handle_webhook(request: Request):
                         'transcript': transcript,
                         'phone': phone
                     }
+                    zaia_service = ZaiaService()
                     zaia_response = await zaia_service.send_message(message_data)
                     logger.info(f"Resposta da Zaia recebida: {zaia_response}")
                     
                     # 3. Verifica se há mensagem na resposta
                     if 'text' in zaia_response and zaia_response['text']:
                         # 4. Gera resposta em áudio usando voz clonada
+                        elevenlabs_service = ElevenLabsService()
                         audio_bytes = elevenlabs_service.generate_audio(zaia_response['text'])
                         
                         # 5. Envia resposta em áudio com simulação de gravação
@@ -140,6 +144,7 @@ async def handle_webhook(request: Request):
                         'text': {'body': message['text']['body']},
                         'phone': phone
                     }
+                    zaia_service = ZaiaService()
                     zaia_response = await zaia_service.send_message(message_data)
                     logger.info(f"Resposta da Zaia recebida: {zaia_response}")
                     
