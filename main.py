@@ -41,7 +41,6 @@ import tempfile
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-from elevenlabs import generate
 from app.config import settings
 from app.routes.webhook_routes import router as webhook_router
 
@@ -154,23 +153,7 @@ def generate_audio(text: str) -> bytes:
         logger.error(f"Error generating audio: {str(e)}")
         raise
 
-def generate_audio_response(text):
-    """
-    Gera resposta em áudio usando ElevenLabs e retorna os bytes do áudio
-    """
-    audio = generate(
-        text=text,
-        voice=VOICE_ID,
-        model="eleven_multilingual_v2",
-        api_key=ELEVEN_API_KEY
-    )
-    
-    # Converte o áudio para bytes
-    if isinstance(audio, bytes):
-        return audio
-    else:
-        # Se o áudio não for bytes, converte para bytes
-        return bytes(audio)
+
 
 # Environment variables
 ELEVEN_API_KEY = os.getenv("ELEVENLABS_API_KEY")
@@ -185,9 +168,12 @@ ZAIA_AGENT_ID = os.getenv("ZAIA_AGENT_ID")
 ZAIA_API_URL = f"{settings.ZAIA_BASE_URL}/v1.1/api/message-cross-channel/create"
 
 # OpenAI Configuration
+import openai
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise ValueError("Missing OPENAI_API_KEY environment variable")
+
+openai_client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Z-API Configuration
 Z_API_ID = os.getenv("Z_API_ID")
@@ -438,7 +424,7 @@ async def send_audio_via_z_api(phone: str, audio_bytes: bytes):
         logger.error(f"Exceção ao enviar áudio: {str(e)}")
         return {"error": str(e)}
 
-def process_audio_message(audio_url):
+async def process_audio_message(audio_url):
     """
     Processa mensagem de áudio: baixa, transcreve e retorna o texto
     """
@@ -449,13 +435,19 @@ def process_audio_message(audio_url):
         temp_audio.write(audio_response.content)
         temp_audio_path = temp_audio.name
     
-    # Transcreve o áudio
-    result = model.transcribe(temp_audio_path)
-    
-    # Remove o arquivo temporário
-    os.unlink(temp_audio_path)
-    
-    return result["text"]
+    try:
+        # Transcreve o áudio usando OpenAI Whisper API
+        with open(temp_audio_path, "rb") as audio_file:
+            transcript = await openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                language="pt",
+                response_format="text"
+            )
+        return transcript
+    finally:
+        # Remove o arquivo temporário
+        os.unlink(temp_audio_path)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 3000))
