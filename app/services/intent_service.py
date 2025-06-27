@@ -1,6 +1,6 @@
 import logging
 import aiohttp
-from app.config import settings
+from app.config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ class IntentService:
             str: Nome da intenção detectada (ex: "reenviar_boleto", "ajuda_prova_flexge", "duvida_gramatical")
         """
         try:
+            settings = Settings()
             # A URL específica para detecção de intenção (ajuste conforme documentação da Zaia)
             url = f"{settings.ZAIA_BASE_URL}/v1.1/api/external-generative-chat/detect-intent"
             

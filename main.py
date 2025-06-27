@@ -41,7 +41,7 @@ import tempfile
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-from app.config import settings
+from app.config.settings import Settings
 from app.routes.webhook_routes import router as webhook_router
 
 # Configure logging
@@ -63,7 +63,12 @@ app.add_middleware(
 )
 
 # Configuração do Cloudinary
-cloudinary.config(**settings.CLOUDINARY_CONFIG)
+settings = Settings()
+cloudinary.config(
+    cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+    api_key=settings.CLOUDINARY_API_KEY,
+    api_secret=settings.CLOUDINARY_API_SECRET
+)
 
 # Register routers
 app.include_router(webhook_router, prefix="/webhook")

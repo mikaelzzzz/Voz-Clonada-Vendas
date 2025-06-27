@@ -1,12 +1,13 @@
 import os
 import logging
 import requests
-from app.config import settings
+from app.config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 class ElevenLabsService:
     def __init__(self):
+        settings = Settings()
         self.api_key = settings.ELEVENLABS_API_KEY
         self.voice_id = settings.ELEVENLABS_VOICE_ID
         self.model_id = "eleven_multilingual_v2"

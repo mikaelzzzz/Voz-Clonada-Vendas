@@ -2,7 +2,7 @@ import logging
 import base64
 import aiohttp
 import asyncio
-from app.config import settings
+from app.config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ class ZAPIService:
         """
         Simula que está digitando no WhatsApp
         """
+        settings = Settings()
         url = f"{settings.Z_API_BASE_URL}/send-chat-state"
         headers = {
             "Content-Type": "application/json",
@@ -45,6 +46,7 @@ class ZAPIService:
         """
         Para de simular que está digitando no WhatsApp
         """
+        settings = Settings()
         url = f"{settings.Z_API_BASE_URL}/send-chat-state"
         headers = {
             "Content-Type": "application/json",
@@ -111,6 +113,7 @@ class ZAPIService:
         """
         Envia mensagem de texto via Z-API
         """
+        settings = Settings()
         url = f"{settings.Z_API_BASE_URL}/send-text"
         headers = {
             "Content-Type": "application/json",
@@ -146,6 +149,7 @@ class ZAPIService:
         Envia áudio com simulação de digitação/gravação
         """
         # Para áudio, simula que está gravando
+        settings = Settings()
         url = f"{settings.Z_API_BASE_URL}/send-chat-state"
         headers = {
             "Content-Type": "application/json",
@@ -183,6 +187,7 @@ class ZAPIService:
         Envia áudio via Z-API.
         O áudio deve estar em formato OGG ou MP3 (preferencialmente OGG para WhatsApp PTT).
         """
+        settings = Settings()
         url = f"{settings.Z_API_BASE_URL}/send-audio"
         try:
             # Codificar o áudio em base64 e adicionar o prefixo

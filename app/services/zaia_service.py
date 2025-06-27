@@ -1,6 +1,6 @@
 import logging
 import aiohttp
-from app.config import settings
+from app.config.settings import Settings
 from app.services.cache_service import CacheService
 import requests
 import time
@@ -37,6 +37,7 @@ class ZaiaService:
         """
         logger.info(f"=== INICIANDO get_or_create_chat para telefone: {phone} ===")
         
+        settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
         agent_id = settings.ZAIA_AGENT_ID
         api_key = settings.ZAIA_API_KEY
@@ -226,6 +227,7 @@ class ZaiaService:
         logger.info(f"=== INICIANDO send_message ===")
         logger.info(f"📨 Dados da mensagem: {message}")
         
+        settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
         agent_id = settings.ZAIA_AGENT_ID
         api_key = settings.ZAIA_API_KEY
@@ -328,6 +330,7 @@ class ZaiaService:
         Busca o histórico completo de mensagens de um chat na Zaia.
         Retorna uma lista de dicionários com origin e text.
         """
+        settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
         api_key = settings.ZAIA_API_KEY
         
@@ -362,6 +365,7 @@ class ZaiaService:
         Encontra o último chat usado por um telefone específico
         através da busca no histórico de todos os chats.
         """
+        settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
         agent_id = settings.ZAIA_AGENT_ID
         api_key = settings.ZAIA_API_KEY
