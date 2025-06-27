@@ -259,19 +259,27 @@ class ZaiaService:
         logger.info(f"📱 Mensagem: '{message_text}' | Telefone: {phone}")
         
         try:
-            # 1. Obter o chat único para este telefone
-            chat_id = await ZaiaService.get_or_create_chat(phone)
-            logger.info(f"✅ Usando chat {chat_id} para {phone}")
+            # NOVA ESTRATÉGIA: Usar externalId (telefone) para gerenciamento automático de chat
+            # A Zaia vai automaticamente usar o mesmo chat para o mesmo externalId
             
-            # 2. Enviar mensagem
+            # 1. Tentar obter chat existente (para logs e cache)
+            chat_id = await ZaiaService.get_or_create_chat(phone)
+            logger.info(f"✅ Chat de referência: {chat_id} para {phone}")
+            
+            # 2. Enviar mensagem com telefone como identificador único
+            # A Zaia vai gerenciar automaticamente qual chat usar baseado no externalId
             payload = {
                 "agentId": int(agent_id),
-                "externalGenerativeChatId": chat_id,
+                "externalGenerativeChatExternalId": phone,  # TELEFONE COMO ID ÚNICO - MAIS IMPORTANTE
                 "prompt": message_text,
                 "streaming": False,
                 "asMarkdown": False,
                 "custom": {"whatsapp": phone}
             }
+            
+            # Incluir chat_id se disponível, mas externalId tem prioridade
+            if chat_id:
+                payload["externalGenerativeChatId"] = chat_id
             
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
             logger.info(f"📤 Enviando para chat {chat_id}")
@@ -310,8 +318,9 @@ class ZaiaService:
                         new_chat_id = await ZaiaService._create_new_chat(base_url, headers, agent_id, phone)
                         await CacheService.set_chat_id(phone, new_chat_id)
                         
-                        # Tentar enviar novamente
+                        # Tentar enviar novamente com novo chat e mesmo external ID
                         payload["externalGenerativeChatId"] = new_chat_id
+                        payload["externalGenerativeChatExternalId"] = phone  # Manter telefone como ID único
                         async with session.post(url_message, headers=headers, json=payload) as retry_response:
                             if retry_response.status == 200:
                                 response_json = await retry_response.json()
