@@ -45,13 +45,13 @@ class CacheService:
             return None
     
     @classmethod
-    async def set_chat_id(cls, phone: str, chat_id: int, ttl: int = 86400):
-        """Armazena o chat ID no cache para um telefone (TTL padrão: 24h)"""
+    async def set_chat_id(cls, phone: str, chat_id: int, ttl: int = 172800):
+        """Armazena o chat ID no cache para um telefone (TTL padrão: 48h)"""
         try:
             client = cls.get_client()
             if client:
                 client.setex(f"chat:{phone}", ttl, str(chat_id))
-                logger.info(f"💾 Chat ID salvo no Redis para {phone}: {chat_id}")
+                logger.info(f"💾 Chat ID salvo no Redis para {phone}: {chat_id} (TTL: {ttl}s = {ttl//3600}h)")
             else:
                 logger.debug(f"📝 Redis não disponível, usando cache local para {phone}")
         except Exception as e:

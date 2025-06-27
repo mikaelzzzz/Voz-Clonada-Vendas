@@ -32,7 +32,7 @@ class ZaiaService:
     async def get_or_create_chat(phone: str):
         """
         Busca um chat existente na Zaia para o telefone ou cria um novo se não existir.
-        Usa cache inteligente para manter consistência entre mensagens.
+        Usa cache inteligente e busca robusta para manter consistência entre mensagens.
         Retorna o chat_id.
         """
         logger.info(f"=== INICIANDO get_or_create_chat para telefone: {phone} ===")
@@ -58,33 +58,55 @@ class ZaiaService:
             "Accept": "application/json"
         }
         
-        # Estratégia 1: Verificar cache Redis/local
+        # Estratégia 1: Verificar cache Redis (prioritário)
         cached_chat_id = await CacheService.get_chat_id(phone)
-        if not cached_chat_id:
-            # Fallback para cache local se Redis não estiver disponível
-            cached_chat_id = ZaiaService._chat_cache.get(phone)
-        
         if cached_chat_id:
-            logger.info(f"🔄 Usando chat do cache para {phone}: {cached_chat_id}")
-            return cached_chat_id
+            logger.info(f"🔄 Chat encontrado no cache Redis para {phone}: {cached_chat_id}")
+            # Verificar se o chat ainda está válido na API
+            is_valid = await ZaiaService._verify_chat_functional(base_url, headers, cached_chat_id)
+            if is_valid:
+                logger.info(f"✅ Chat do cache Redis é válido para {phone}: {cached_chat_id}")
+                # Também atualizar cache local para redundância
+                ZaiaService._chat_cache[phone] = cached_chat_id
+                return cached_chat_id
+            else:
+                logger.warning(f"⚠️ Chat do cache Redis inválido para {phone}: {cached_chat_id}, removendo do cache")
+                await CacheService.clear_chat_id(phone)
+                ZaiaService._chat_cache.pop(phone, None)
         
-        # Estratégia 2: Buscar último chat usado por este telefone
-        logger.info(f"🔍 Cache vazio, buscando último chat usado para {phone}")
+        # Estratégia 2: Verificar cache local como fallback
+        local_cached_chat_id = ZaiaService._chat_cache.get(phone)
+        if local_cached_chat_id:
+            logger.info(f"🔄 Chat encontrado no cache local para {phone}: {local_cached_chat_id}")
+            # Verificar se o chat ainda está válido na API
+            is_valid = await ZaiaService._verify_chat_functional(base_url, headers, local_cached_chat_id)
+            if is_valid:
+                logger.info(f"✅ Chat do cache local é válido para {phone}: {local_cached_chat_id}")
+                # Sincronizar de volta para Redis
+                await CacheService.set_chat_id(phone, local_cached_chat_id)
+                return local_cached_chat_id
+            else:
+                logger.warning(f"⚠️ Chat do cache local inválido para {phone}: {local_cached_chat_id}, removendo do cache")
+                ZaiaService._chat_cache.pop(phone, None)
+        
+        # Estratégia 3: Busca robusta na API da Zaia
+        logger.info(f"🔍 Cache vazio, executando busca robusta para {phone}")
         last_chat_id = await ZaiaService.find_last_chat_by_phone(phone)
         
         if last_chat_id:
-            logger.info(f"✅ ÚLTIMO CHAT ENCONTRADO para {phone} - Chat ID: {last_chat_id}")
-            # Atualizar cache Redis e local
+            logger.info(f"✅ CHAT ENCONTRADO via busca robusta para {phone} - Chat ID: {last_chat_id}")
+            # Atualizar ambos os caches para evitar futuras buscas
             await CacheService.set_chat_id(phone, last_chat_id)
             ZaiaService._chat_cache[phone] = last_chat_id
             return last_chat_id
         
-        # Estratégia 3: Criar novo chat se nenhum foi encontrado
-        logger.info(f"🆕 Nenhum chat existente, criando novo para {phone}")
+        # Estratégia 4: Criar novo chat apenas se nenhum foi encontrado
+        logger.info(f"🆕 Nenhum chat existente encontrado, criando novo para {phone}")
         new_chat_id = await ZaiaService._create_new_chat(base_url, headers, agent_id, phone)
-        # Atualizar cache Redis e local
+        # Atualizar ambos os caches
         await CacheService.set_chat_id(phone, new_chat_id)
         ZaiaService._chat_cache[phone] = new_chat_id
+        logger.info(f"✅ NOVO CHAT CRIADO para {phone} - Chat ID: {new_chat_id}")
         return new_chat_id
 
     @staticmethod
@@ -291,11 +313,16 @@ class ZaiaService:
                             response_json = await response.json()
                             logger.info(f"✅ Resposta da Zaia para {phone} (Chat {chat_id}): {response_json}")
                             
-                            # IMPORTANTE: Atualizar cache com o chat ID da resposta da Zaia
+                            # IMPORTANTE: Sempre atualizar cache com o chat ID da resposta da Zaia
                             # A Zaia pode retornar um chat ID diferente do que enviamos
                             response_chat_id = response_json.get('externalGenerativeChatId')
-                            if response_chat_id and response_chat_id != chat_id:
-                                logger.info(f"🔄 Atualizando cache: Chat ID {chat_id} → {response_chat_id} para {phone}")
+                            if response_chat_id:
+                                if response_chat_id != chat_id:
+                                    logger.info(f"🔄 Zaia retornou chat ID diferente: {chat_id} → {response_chat_id} para {phone}")
+                                else:
+                                    logger.info(f"✅ Confirmando chat ID {response_chat_id} para {phone}")
+                                
+                                # Sempre atualizar o cache com o ID correto retornado pela Zaia
                                 await CacheService.set_chat_id(phone, response_chat_id)
                                 ZaiaService._chat_cache[phone] = response_chat_id
                             
@@ -362,8 +389,8 @@ class ZaiaService:
     @staticmethod
     async def find_last_chat_by_phone(phone: str) -> int:
         """
-        Encontra o último chat usado por um telefone específico
-        através da busca no histórico de todos os chats.
+        Busca robusta que encontra o chat mais recente com atividade para um telefone específico.
+        Analisa múltiplos chats e suas mensagens para determinar qual foi usado por último.
         """
         settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
@@ -377,52 +404,119 @@ class ZaiaService:
         }
         
         try:
-            # Buscar todos os chats do agente (mais recentes primeiro)
+            # 1. Buscar todos os chats do agente (mais recentes primeiro)
             url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple"
             params = {
-                "agentIds": [int(agent_id)],  # Array de números conforme documentação
-                "limit": 50,  # Reduzir para focar nos mais recentes
+                "agentIds": [int(agent_id)],
+                "limit": 100,  # Aumentar limite para busca mais ampla
                 "offset": 0,
-                "sortBy": "createdAt",  # Ordenar por data de criação
-                "sortOrder": "desc"     # Mais recentes primeiro
+                "sortBy": "createdAt",
+                "sortOrder": "desc"
             }
             
-            response = requests.get(url, params=params, headers=headers, timeout=10)
+            logger.info(f"🔍 Buscando chats para {phone} na API da Zaia...")
+            response = requests.get(url, params=params, headers=headers, timeout=15)
             
             if response.status_code != 200:
                 logger.error(f"❌ Erro na busca de chats: {response.status_code} - {response.text}")
                 return None
                 
             data = response.json()
-            chats = data.get("externalGenerativeChats", [])
+            all_chats = data.get("externalGenerativeChats", [])
             
-            if not chats:
-                logger.info(f"📄 Nenhum chat encontrado para busca por histórico")
+            if not all_chats:
+                logger.info(f"📄 Nenhum chat encontrado no agente {agent_id}")
                 return None
             
-            # Filtrar chats do WhatsApp para este telefone e ordenar por data
+            logger.info(f"📋 Encontrados {len(all_chats)} chats totais, filtrando por telefone {phone}...")
+            
+            # 2. Filtrar chats do WhatsApp para este telefone específico
             phone_chats = []
-            for chat in chats:
-                if (chat.get("channel") == "whatsapp" and 
-                    chat.get("phoneNumber") == phone and
-                    chat.get("status") == "active"):
+            for chat in all_chats:
+                chat_id = chat.get("id")
+                chat_phone = chat.get("phoneNumber")
+                channel = chat.get("channel")
+                status = chat.get("status")
+                created_at = chat.get("createdAt")
+                
+                logger.info(f"🔍 Analisando chat {chat_id}: phone={chat_phone}, channel={channel}, status={status}")
+                
+                # Filtrar apenas chats ativos do WhatsApp para este telefone
+                if (channel == "whatsapp" and 
+                    chat_phone == phone and
+                    status == "active"):
                     phone_chats.append(chat)
+                    logger.info(f"✅ Chat válido encontrado: {chat_id} (criado: {created_at})")
             
             if not phone_chats:
-                logger.info(f"📄 Nenhum chat do WhatsApp encontrado para {phone}")
+                logger.info(f"📄 Nenhum chat ativo do WhatsApp encontrado para {phone}")
                 return None
             
-            # Ordenar por data de criação (mais recente primeiro)
-            phone_chats.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+            logger.info(f"📋 {len(phone_chats)} chats válidos encontrados para {phone}")
             
-            # Pegar o chat mais recente
-            latest_chat = phone_chats[0]
-            chat_id = latest_chat.get("id")
-            created_at = latest_chat.get("createdAt")
+            # 3. Para cada chat válido, buscar a última mensagem para determinar qual foi usado mais recentemente
+            chat_with_last_activity = None
+            latest_activity_time = None
             
-            logger.info(f"🎯 Último chat encontrado para {phone}: {chat_id} (criado em: {created_at})")
-            return chat_id
+            for chat in phone_chats:
+                chat_id = chat.get("id")
+                created_at = chat.get("createdAt")
+                
+                try:
+                    # Buscar mensagens deste chat específico
+                    messages_url = f"{base_url}/v1.1/api/external-generative-message/retrieve-multiple"
+                    messages_params = {
+                        "externalGenerativeChatIds": [chat_id],
+                        "limit": 5,  # Só precisamos das mais recentes
+                        "offset": 0,
+                        "sortBy": "createdAt",
+                        "sortOrder": "desc"
+                    }
+                    
+                    messages_response = requests.get(messages_url, params=messages_params, headers=headers, timeout=10)
+                    
+                    if messages_response.status_code == 200:
+                        messages_data = messages_response.json()
+                        chat_messages = messages_data.get("externalGenerativeMessages", [])
+                        
+                        if chat_messages:
+                            # Pegar a mensagem mais recente
+                            last_message = chat_messages[0]
+                            last_message_time = last_message.get("createdAt")
+                            
+                            logger.info(f"📅 Chat {chat_id}: última mensagem em {last_message_time}")
+                            
+                            # Comparar com o chat mais ativo até agora
+                            if latest_activity_time is None or last_message_time > latest_activity_time:
+                                latest_activity_time = last_message_time
+                                chat_with_last_activity = chat
+                                logger.info(f"🎯 Novo chat mais recente: {chat_id}")
+                        else:
+                            # Se não há mensagens, usar data de criação do chat
+                            logger.info(f"📅 Chat {chat_id}: sem mensagens, usando data de criação {created_at}")
+                            if latest_activity_time is None or created_at > latest_activity_time:
+                                latest_activity_time = created_at
+                                chat_with_last_activity = chat
+                    else:
+                        logger.warning(f"⚠️ Erro ao buscar mensagens do chat {chat_id}: {messages_response.status_code}")
+                        # Fallback para data de criação
+                        if latest_activity_time is None or created_at > latest_activity_time:
+                            latest_activity_time = created_at
+                            chat_with_last_activity = chat
+                            
+                except Exception as e:
+                    logger.warning(f"⚠️ Erro ao analisar atividade do chat {chat_id}: {str(e)}")
+                    continue
+            
+            # 4. Retornar o chat com atividade mais recente
+            if chat_with_last_activity:
+                final_chat_id = chat_with_last_activity.get("id")
+                logger.info(f"🎯 CHAT MAIS RECENTE para {phone}: {final_chat_id} (última atividade: {latest_activity_time})")
+                return final_chat_id
+            else:
+                logger.info(f"❌ Nenhum chat com atividade encontrado para {phone}")
+                return None
             
         except Exception as e:
-            logger.error(f"❌ Erro ao buscar último chat por telefone: {str(e)}")
+            logger.error(f"❌ Erro na busca robusta de chat por telefone: {str(e)}")
             return None 
