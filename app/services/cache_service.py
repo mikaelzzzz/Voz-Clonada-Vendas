@@ -2,7 +2,7 @@ import redis
 import logging
 import json
 from typing import Optional
-from app.config.settings import settings
+from app.config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ class CacheService:
     @classmethod
     def get_client(cls):
         """Obtém o cliente Redis (singleton)"""
+        settings = Settings()
         if cls._redis_client is None and settings.REDIS_ENABLED:
             try:
                 cls._redis_client = redis.from_url(
@@ -44,8 +45,8 @@ class CacheService:
             return None
     
     @classmethod
-    async def set_chat_id(cls, phone: str, chat_id: int, ttl: int = 43200):
-        """Armazena o chat ID no cache para um telefone (TTL padrão: 12h)"""
+    async def set_chat_id(cls, phone: str, chat_id: int, ttl: int = 86400):
+        """Armazena o chat ID no cache para um telefone (TTL padrão: 24h)"""
         try:
             client = cls.get_client()
             if client:

@@ -377,12 +377,14 @@ class ZaiaService:
         }
         
         try:
-            # Buscar todos os chats do agente
+            # Buscar todos os chats do agente (mais recentes primeiro)
             url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple"
             params = {
                 "agentIds": [int(agent_id)],  # Array de números conforme documentação
-                "limit": 100,
-                "offset": 0
+                "limit": 50,  # Reduzir para focar nos mais recentes
+                "offset": 0,
+                "sortBy": "createdAt",  # Ordenar por data de criação
+                "sortOrder": "desc"     # Mais recentes primeiro
             }
             
             response = requests.get(url, params=params, headers=headers, timeout=10)
