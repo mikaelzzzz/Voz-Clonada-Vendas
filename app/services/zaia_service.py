@@ -89,7 +89,7 @@ class ZaiaService:
             # Usar o endpoint correto conforme documentação
             url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple"
             params = {
-                "agentIds": agent_id,  # String, não array
+                "agentIds": [int(agent_id)],  # Array de números conforme documentação
                 "limit": 50,
                 "offset": 0
             }
@@ -366,7 +366,7 @@ class ZaiaService:
             # Buscar todos os chats do agente
             url = f"{base_url}/v1.1/api/external-generative-chat/retrieve-multiple"
             params = {
-                "agentIds": agent_id,
+                "agentIds": [int(agent_id)],  # Array de números conforme documentação
                 "limit": 100,
                 "offset": 0
             }
