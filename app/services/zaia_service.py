@@ -76,9 +76,15 @@ class ZaiaService:
         
         if active_chat_id:
             logger.info(f"✅ CHAT ATIVO ENCONTRADO para {phone}: {active_chat_id}")
-            # Salvar no cache para próximas consultas
-            await CacheService.set_chat_id(phone, active_chat_id)
-            return active_chat_id
+            # Verificar se este chat ainda é funcional antes de usar
+            if await ZaiaService._verify_chat_functional(base_url, headers, active_chat_id):
+                logger.info(f"✅ Chat encontrado é funcional: {active_chat_id}")
+                # Salvar no cache para próximas consultas
+                await CacheService.set_chat_id(phone, active_chat_id)
+                return active_chat_id
+            else:
+                logger.warning(f"⚠️ Chat encontrado não é funcional: {active_chat_id}")
+                # Continuar para criar novo chat
         
         # PASSO 3: Criar novo chat se não existe nenhum ativo
         logger.info(f"🆕 Nenhum chat ativo encontrado, criando novo para {phone}")
@@ -278,11 +284,18 @@ class ZaiaService:
                         response_json = await response.json()
                         logger.info(f"✅ Resposta recebida: {response_json}")
                         
-                        # Atualizar cache com o chat ID retornado (pode ser diferente)
+                        # SEMPRE atualizar cache com o chat ID retornado pela Zaia
                         response_chat_id = response_json.get('externalGenerativeChatId')
-                        if response_chat_id and response_chat_id != chat_id:
-                            logger.info(f"🔄 Chat ID atualizado: {chat_id} → {response_chat_id}")
+                        if response_chat_id:
+                            if response_chat_id != chat_id:
+                                logger.warning(f"🚨 PROBLEMA: Zaia criou novo chat! {chat_id} → {response_chat_id}")
+                                logger.warning(f"🚨 Isso indica que a Zaia não está mantendo o chat existente")
+                            else:
+                                logger.info(f"✅ Chat ID mantido: {chat_id}")
+                            
+                            # Sempre salvar o chat ID mais recente retornado pela Zaia
                             await CacheService.set_chat_id(phone, response_chat_id)
+                            logger.info(f"💾 Cache atualizado com chat ID: {response_chat_id}")
                         
                         return response_json
                         
@@ -392,6 +405,8 @@ class ZaiaService:
             logger.info(f"📋 Encontrados {len(all_chats)} chats totais")
             
             # Filtrar apenas chats ativos do WhatsApp para este telefone específico
+            # Primeiro, coletar todos os chats válidos para este telefone
+            valid_chats = []
             for chat in all_chats:
                 chat_id = chat.get("id")
                 chat_phone = chat.get("phoneNumber")
@@ -406,8 +421,19 @@ class ZaiaService:
                     chat_phone == phone and
                     status == "active"):
                     
-                    logger.info(f"✅ CHAT ATIVO ENCONTRADO: {chat_id} (criado: {created_at})")
-                    return chat_id
+                    valid_chats.append({
+                        "id": chat_id,
+                        "created_at": created_at
+                    })
+                    logger.info(f"✅ Chat válido encontrado: {chat_id} (criado: {created_at})")
+            
+            # Se encontrou chats válidos, retornar o mais recente
+            if valid_chats:
+                # Ordenar por data de criação (mais recente primeiro)
+                valid_chats.sort(key=lambda x: x["created_at"], reverse=True)
+                most_recent_chat = valid_chats[0]
+                logger.info(f"🎯 CHAT MAIS RECENTE para {phone}: {most_recent_chat['id']} (criado: {most_recent_chat['created_at']})")
+                return most_recent_chat["id"]
             
             logger.info(f"❌ Nenhum chat ativo encontrado para {phone}")
             return None
