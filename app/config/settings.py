@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
+from typing import List
 
 # Carrega variáveis de ambiente
 load_dotenv()
@@ -73,8 +74,7 @@ class Settings(BaseSettings):
     NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID")
 
     # Sales Team
-    sales_team_phones_str = os.getenv("SALES_TEAM_PHONES", "5511975578651,5511957708562,5511955911993")
-    SALES_TEAM_PHONES = [phone.strip() for phone in sales_team_phones_str.split(',') if phone.strip()]
+    SALES_TEAM_PHONES: List[str] = [p.strip() for p in os.getenv("SALES_TEAM_PHONES", "5511975578651,5511957708562,5511955911993").split(',')]
 
     @property
     def is_redis_enabled(self) -> bool:
