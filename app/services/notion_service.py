@@ -79,6 +79,7 @@ class NotionService:
         properties = {
             "Cliente": {"title": [{"text": {"content": sender_name}}]},
             "Telefone": {"rich_text": [{"text": {"content": phone}}]},
+            "Link Rápido WhatsApp": {"url": f"https://wa.me/{phone}"}
         }
 
         if page_id:
@@ -117,8 +118,8 @@ class NotionService:
 
     def update_lead_properties(self, phone: str, updates: dict):
         """
-        Atualiza as propriedades de um lead (ex: profissão, motivação).
-        'updates' deve ser um dicionário como {'Profissão': 'Engenheiro', 'Real Motivação': 'Viajar'}
+        Atualiza as propriedades de um lead (ex: profissão, motivação, status).
+        'updates' deve ser um dicionário como {'Profissão': 'Engenheiro', 'Status': 'Qualificado'}
         """
         if not self.api_key or not self.database_id:
             logger.warning("Credenciais do Notion não configuradas. Serviço desabilitado.")
@@ -131,7 +132,18 @@ class NotionService:
 
         properties = {}
         for key, value in updates.items():
-            if value: # Apenas adiciona se tiver valor
+            if not value:
+                continue
+            
+            # Formatação baseada no nome da propriedade
+            if key == 'Status':
+                properties[key] = {"status": {"name": str(value)}}
+            elif key == 'Nível de Qualificação':
+                properties[key] = {"select": {"name": str(value)}}
+            elif key == 'Link Rápido WhatsApp':
+                properties[key] = {"url": str(value)}
+            # Para outros campos, assume rich_text
+            else:
                 properties[key] = {"rich_text": [{"text": {"content": str(value)}}]}
 
         if not properties:
