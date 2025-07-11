@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     NOTION_API_KEY: str = os.getenv("NOTION_API_KEY")
     NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID")
 
+    # Sales Team
+    sales_team_phones_str = os.getenv("SALES_TEAM_PHONES", "5511975578651,5511957708562,5511955911993")
+    SALES_TEAM_PHONES = [phone.strip() for phone in sales_team_phones_str.split(',') if phone.strip()]
+
+    @property
+    def is_redis_enabled(self) -> bool:
+        return self.REDIS_ENABLED
+
     class Config:
         env_file = ".env"
 

@@ -33,6 +33,38 @@ class NotionService:
             print(f"[NOTION_SERVICE_ERROR] {error_message}") # Print para depuração
             return None
 
+    def _parse_properties(self, notion_props: dict) -> dict:
+        """Converte as propriedades do Notion para um dicionário simples."""
+        data = {}
+        for name, prop in notion_props.items():
+            prop_type = prop['type']
+            if prop_type == 'title' and prop['title']:
+                data[name] = prop['title'][0]['text']['content']
+            elif prop_type == 'rich_text' and prop['rich_text']:
+                data[name] = prop['rich_text'][0]['text']['content']
+            elif prop_type == 'email' and prop['email']:
+                data[name] = prop['email']
+            # Adicione outros tipos se necessário
+        return data
+
+    def get_lead_data_by_phone(self, phone: str) -> dict or None:
+        """Busca os dados de um lead pelo telefone e retorna um dicionário."""
+        page_id = self._find_page_by_phone(phone)
+        if not page_id:
+            return None
+        
+        try:
+            url = f"{self.api_url}/pages/{page_id}"
+            response = requests.get(url, headers=self.headers)
+            response.raise_for_status()
+            page_data = response.json()
+            return self._parse_properties(page_data.get("properties", {}))
+        except Exception as e:
+            error_message = f"Erro ao buscar dados do lead {phone} no Notion: {e}"
+            logger.error(error_message)
+            print(f"[NOTION_SERVICE_ERROR] {error_message}")
+            return None
+
     def create_or_update_lead(self, sender_name: str, phone: str, photo_url: str = None):
         """
         Cria uma nova página no Notion para um lead se não existir,
@@ -83,36 +115,37 @@ class NotionService:
                 logger.error(error_message)
                 print(f"[NOTION_SERVICE_ERROR] {error_message}") # Print para depuração
 
-    def update_lead_motivation(self, phone: str, motivation: str):
+    def update_lead_properties(self, phone: str, updates: dict):
         """
-        Atualiza a propriedade 'Real Motivação' de um lead no Notion.
+        Atualiza as propriedades de um lead (ex: profissão, motivação).
+        'updates' deve ser um dicionário como {'Profissão': 'Engenheiro', 'Real Motivação': 'Viajar'}
         """
         if not self.api_key or not self.database_id:
             logger.warning("Credenciais do Notion não configuradas. Serviço desabilitado.")
             return
 
         page_id = self._find_page_by_phone(phone)
-
         if not page_id:
-            error_message = f"Não foi possível encontrar lead com telefone {phone} para atualizar motivação."
-            logger.warning(error_message)
-            print(f"[NOTION_SERVICE_WARNING] {error_message}")
+            logger.warning(f"Não foi possível encontrar lead com telefone {phone} para atualizar.")
             return
 
-        logger.info(f"Atualizando motivação para o lead {phone} (Page ID: {page_id})...")
-        
-        properties = {
-            "Real Motivação": {"rich_text": [{"text": {"content": motivation or ""}}]}
-        }
-        
+        properties = {}
+        for key, value in updates.items():
+            if value: # Apenas adiciona se tiver valor
+                properties[key] = {"rich_text": [{"text": {"content": str(value)}}]}
+
+        if not properties:
+            logger.info("Nenhuma propriedade para atualizar.")
+            return
+
         update_url = f"{self.api_url}/pages/{page_id}"
         payload = {"properties": properties}
 
         try:
             response = requests.patch(update_url, headers=self.headers, json=payload)
             response.raise_for_status()
-            logger.info(f"Motivação do lead {phone} atualizada com sucesso.")
+            logger.info(f"Propriedades do lead {phone} atualizadas com sucesso.")
         except Exception as e:
-            error_message = f"Erro ao atualizar motivação no Notion para o lead {phone}: {e}"
+            error_message = f"Erro ao atualizar propriedades no Notion para o lead {phone}: {e}"
             logger.error(error_message)
             print(f"[NOTION_SERVICE_ERROR] {error_message}") 
