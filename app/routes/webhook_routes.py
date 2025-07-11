@@ -21,6 +21,21 @@ async def handle_webhook(request: Request):
         data = await request.json()
         logger.info(f"Webhook recebido: {data}")
 
+        # Verifica se é um webhook da Zaia para atualizar a motivação
+        if 'motivo' in data and 'whatsapp' in data:
+            phone = data['whatsapp']
+            motivo = data['motivo']
+            logger.info(f"Recebido webhook da Zaia para {phone} com motivo: {motivo}")
+            try:
+                notion_service = NotionService()
+                notion_service.update_lead_motivation(phone=phone, motivation=motivo)
+                return JSONResponse({"status": "notion_updated"})
+            except Exception as e:
+                error_message = f"Falha ao atualizar motivação no Notion para {phone}: {e}"
+                logger.error(error_message)
+                print(f"[WEBHOOK_ERROR] {error_message}")
+                return JSONResponse({"status": "error", "message": error_message}, status_code=500)
+
         # Verifica se é uma mensagem recebida (formato Z-API)
         if data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
             phone = data.get('phone')

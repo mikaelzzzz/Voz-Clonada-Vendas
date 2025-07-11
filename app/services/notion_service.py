@@ -81,4 +81,38 @@ class NotionService:
             except Exception as e:
                 error_message = f"Erro ao criar página no Notion para o lead {phone}: {e}"
                 logger.error(error_message)
-                print(f"[NOTION_SERVICE_ERROR] {error_message}") # Print para depuração 
+                print(f"[NOTION_SERVICE_ERROR] {error_message}") # Print para depuração
+
+    def update_lead_motivation(self, phone: str, motivation: str):
+        """
+        Atualiza a propriedade 'Real Motivação' de um lead no Notion.
+        """
+        if not self.api_key or not self.database_id:
+            logger.warning("Credenciais do Notion não configuradas. Serviço desabilitado.")
+            return
+
+        page_id = self._find_page_by_phone(phone)
+
+        if not page_id:
+            error_message = f"Não foi possível encontrar lead com telefone {phone} para atualizar motivação."
+            logger.warning(error_message)
+            print(f"[NOTION_SERVICE_WARNING] {error_message}")
+            return
+
+        logger.info(f"Atualizando motivação para o lead {phone} (Page ID: {page_id})...")
+        
+        properties = {
+            "Real Motivação": {"rich_text": [{"text": {"content": motivation or ""}}]}
+        }
+        
+        update_url = f"{self.api_url}/pages/{page_id}"
+        payload = {"properties": properties}
+
+        try:
+            response = requests.patch(update_url, headers=self.headers, json=payload)
+            response.raise_for_status()
+            logger.info(f"Motivação do lead {phone} atualizada com sucesso.")
+        except Exception as e:
+            error_message = f"Erro ao atualizar motivação no Notion para o lead {phone}: {e}"
+            logger.error(error_message)
+            print(f"[NOTION_SERVICE_ERROR] {error_message}") 
