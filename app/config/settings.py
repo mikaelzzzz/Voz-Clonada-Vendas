@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from pydantic import computed_field
 from pydantic_settings import BaseSettings
 from typing import List
 
@@ -73,8 +74,16 @@ class Settings(BaseSettings):
     NOTION_API_KEY: str = os.getenv("NOTION_API_KEY")
     NOTION_DATABASE_ID: str = os.getenv("NOTION_DATABASE_ID")
 
-    # Sales Team
-    SALES_TEAM_PHONES: List[str] = [p.strip() for p in os.getenv("SALES_TEAM_PHONES", "5511975578651,5511957708562,5511955911993").split(',')]
+    # Sales Team: lê a variável como uma string para evitar erros de parse
+    SALES_TEAM_PHONES_STR: str = os.getenv("SALES_TEAM_PHONES", "5511975578651,5511957708562,5511955911993")
+
+    @computed_field
+    @property
+    def SALES_TEAM_PHONES(self) -> List[str]:
+        """Converte a string de telefones em uma lista, de forma segura."""
+        if not self.SALES_TEAM_PHONES_STR:
+            return []
+        return [p.strip() for p in self.SALES_TEAM_PHONES_STR.split(',') if p.strip()]
 
     @property
     def is_redis_enabled(self) -> bool:
