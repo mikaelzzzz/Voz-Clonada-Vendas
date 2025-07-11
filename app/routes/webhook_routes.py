@@ -1,5 +1,6 @@
 import logging
-from fastapi import APIRouter, Request, JSONResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from app.services.z_api_service import ZAPIService
 from app.services.zaia_service import ZaiaService
 from app.services.elevenlabs_service import ElevenLabsService
@@ -7,6 +8,7 @@ from app.services.whisper_service import WhisperService
 from app.services.notion_service import NotionService
 from app.services.openai_service import OpenAIService
 from app.config.settings import Settings
+from app.services.qualification_service import QualificationService
 
 
 logger = logging.getLogger(__name__)
@@ -23,30 +25,46 @@ async def handle_webhook(request: Request):
         phone = data.get('whatsapp')
         profissao = data.get('profissao')
         motivo = data.get('motivo')
-        logger.info(f"Processando alerta de vendas para {phone}")
+        logger.info(f"Processando qualificação de lead para {phone}")
 
         try:
             notion_service = NotionService()
             openai_service = OpenAIService()
+            qualification_service = QualificationService()
             settings = Settings()
 
-            # Atualiza e busca dados do lead
-            notion_service.update_lead_properties(phone, {"Profissão": profissao, "Real Motivação": motivo})
-            lead_data = notion_service.get_lead_data_by_phone(phone)
+            # 1. Classifica o lead
+            qualification_level = await qualification_service.classify_lead(motivo, profissao)
+            logger.info(f"Lead {phone} classificado como: {qualification_level}")
 
-            if lead_data:
-                # Gera e envia a análise de vendas
-                sales_message = await openai_service.generate_sales_message(lead_data)
-                for sales_phone in settings.SALES_TEAM_PHONES:
-                    await ZAPIService.send_text(sales_phone, sales_message)
-                logger.info(f"Alerta de vendas para o lead {phone} enviado com sucesso.")
+            # 2. Atualiza o Notion com todas as informações
+            updates = {
+                "Profissão": profissao,
+                "Real Motivação": motivo,
+                "Status": "Qualificado pela IA",
+                "Nível de Qualificação": qualification_level
+            }
+            notion_service.update_lead_properties(phone, updates)
+            
+            # 3. Se for de alta prioridade, gera e envia a análise de vendas
+            if qualification_level == 'Alto':
+                logger.info(f"Lead {phone} é de alta prioridade. Gerando alerta para equipe de vendas.")
+                lead_data = notion_service.get_lead_data_by_phone(phone)
+
+                if lead_data:
+                    sales_message = await openai_service.generate_sales_message(lead_data)
+                    for sales_phone in settings.SALES_TEAM_PHONES:
+                        await ZAPIService.send_text(sales_phone, sales_message)
+                    logger.info(f"Alerta de vendas para o lead {phone} enviado com sucesso.")
+                else:
+                    logger.warning(f"Não foi possível encontrar dados do lead {phone} para gerar alerta.")
             else:
-                logger.warning(f"Lead {phone} não encontrado no Notion para alerta de vendas.")
+                logger.info(f"Lead {phone} é de baixa prioridade. Nenhuma notificação de vendas será enviada.")
 
-            return JSONResponse({"status": "sales_alert_processed"})
+            return JSONResponse({"status": "lead_qualified_processed"})
 
         except Exception as e:
-            error_message = f"Erro ao processar alerta de vendas para {phone}: {e}"
+            error_message = f"Erro ao processar qualificação de lead para {phone}: {e}"
             logger.error(error_message)
             print(f"[WEBHOOK_ERROR] {error_message}")
             return JSONResponse({"status": "error", "detail": error_message}, status_code=500)
@@ -72,10 +90,10 @@ async def handle_webhook(request: Request):
                 audio_url = data['audio']['audioUrl']
                 whisper_service = WhisperService()
                 transcript = await whisper_service.transcribe_audio(audio_url)
-                
+
                 zaia_service = ZaiaService()
                 zaia_response = await zaia_service.send_message({'transcript': transcript, 'phone': phone})
-                
+
                 if zaia_response.get('text'):
                     elevenlabs_service = ElevenLabsService()
                     audio_bytes = elevenlabs_service.generate_audio(zaia_response['text'])
@@ -86,10 +104,10 @@ async def handle_webhook(request: Request):
                 message_text = data['text'].get('message', '')
                 zaia_service = ZaiaService()
                 zaia_response = await zaia_service.send_message({'text': {'body': message_text}, 'phone': phone})
-                
+
                 if zaia_response.get('text'):
                     await ZAPIService.send_text_with_typing(phone, zaia_response['text'])
-            
+
             return JSONResponse({"status": "message_processed"})
 
         except Exception as e:
