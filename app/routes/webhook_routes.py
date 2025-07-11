@@ -7,6 +7,7 @@ from app.services.elevenlabs_service import ElevenLabsService
 from app.services.whisper_service import WhisperService
 from app.services.queue_service import queue_service, QueueService
 from app.services.cache_service import CacheService
+from app.services.notion_service import NotionService
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,26 @@ async def handle_webhook(request: Request):
         # Verifica se é uma mensagem recebida (formato Z-API)
         if data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
             phone = data.get('phone')
-            
-            if not phone:
-                logger.warning("Telefone não encontrado na mensagem")
-                return JSONResponse({"status": "no_phone"})
+            sender_name = data.get('senderName')
+            photo_url = data.get('photo')
+
+            if not phone or not sender_name:
+                logger.warning("Telefone ou nome do remetente não encontrado na mensagem")
+                return JSONResponse({"status": "missing_data"})
+
+            # Cria ou atualiza o lead no Notion
+            try:
+                notion_service = NotionService()
+                notion_service.create_or_update_lead(
+                    sender_name=sender_name,
+                    phone=phone,
+                    photo_url=photo_url
+                )
+            except Exception as e:
+                error_message = f"Falha ao processar lead no Notion para {phone}: {e}"
+                logger.error(error_message)
+                print(f"[WEBHOOK_ERROR] {error_message}") # Print para depuração
+                # Continua o fluxo mesmo que o Notion falhe
             
             # Processa baseado no conteúdo da mensagem
             if 'audio' in data and data['audio']:
