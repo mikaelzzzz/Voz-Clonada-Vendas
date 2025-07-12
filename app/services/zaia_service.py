@@ -220,9 +220,9 @@ class ZaiaService:
             raise Exception(f"Erro de rede ao criar chat: {str(e)}")
 
     @staticmethod
-    async def send_message(message: dict):
+    async def send_message(message: dict, metadata: dict = None):
         """
-        ESTRATÉGIA COMPROVADA: Contexto automático com externalId
+        ESTRATÉGIA COMPROVADA: Contexto automático com externalId e metadados.
         
         ✅ TESTES CONFIRMARAM:
         - A Zaia mantém contexto perfeitamente usando apenas externalGenerativeChatExternalId
@@ -231,13 +231,11 @@ class ZaiaService:
         - Não precisa gerenciar chat IDs manualmente
         
         Args:
-            message: Dicionário contendo:
-                - text.body: Texto da mensagem (para mensagens de texto)  
-                - transcript: Texto transcrito (para mensagens de áudio)
-                - phone: Número do telefone do usuário
+            message: Dicionário contendo o texto e o telefone.
+            metadata: Dicionário com dados extras (ex: {'nome': 'Mikael'}) para preencher variáveis na Zaia.
         """
         logger.info(f"=== ENVIANDO MENSAGEM ===")
-        logger.info(f"📨 Dados: {message}")
+        logger.info(f"📨 Dados: {message} | Metadados: {metadata}")
         
         settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
@@ -280,8 +278,13 @@ class ZaiaService:
                 "custom": {"whatsapp": phone}
             }
             
+            # Adiciona os metadados ao payload se eles existirem
+            if metadata:
+                payload["data"] = metadata
+
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
             logger.info(f"📤 Enviando mensagem para Zaia...")
+            logger.info(f"📤 Payload completo: {payload}")
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(url_message, headers=headers, json=payload) as response:

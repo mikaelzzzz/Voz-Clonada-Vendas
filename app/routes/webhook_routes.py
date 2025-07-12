@@ -115,10 +115,12 @@ async def handle_webhook(request: Request):
                 audio_url = data['audio']['audioUrl']
                 whisper_service = WhisperService()
                 transcript = await whisper_service.transcribe_audio(audio_url)
-
+                
                 zaia_service = ZaiaService()
-                zaia_response = await zaia_service.send_message({'transcript': transcript, 'phone': phone})
-
+                # Passa o nome do cliente nos metadados
+                metadata = {"nome": sender_name}
+                zaia_response = await zaia_service.send_message({'transcript': transcript, 'phone': phone}, metadata=metadata)
+                
                 if zaia_response.get('text'):
                     elevenlabs_service = ElevenLabsService()
                     audio_bytes = elevenlabs_service.generate_audio(zaia_response['text'])
@@ -128,11 +130,13 @@ async def handle_webhook(request: Request):
                 # Processamento de texto...
                 message_text = data['text'].get('message', '')
                 zaia_service = ZaiaService()
-                zaia_response = await zaia_service.send_message({'text': {'body': message_text}, 'phone': phone})
-
+                # Passa o nome do cliente nos metadados
+                metadata = {"nome": sender_name}
+                zaia_response = await zaia_service.send_message({'text': {'body': message_text}, 'phone': phone}, metadata=metadata)
+                
                 if zaia_response.get('text'):
                     await ZAPIService.send_text_with_typing(phone, zaia_response['text'])
-
+            
             return JSONResponse({"status": "message_processed"})
 
         except Exception as e:
