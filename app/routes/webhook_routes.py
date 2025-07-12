@@ -20,9 +20,16 @@ async def handle_webhook(request: Request):
     data = await request.json()
     logger.info(f"Webhook recebido: {data}")
 
-    # Rota 1: Webhook de Alerta de Vendas da Zaia
+    # Rota 1: Webhook de Qualificação de Lead da Zaia
     if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
         phone = data.get('whatsapp')
+
+        # Validação para garantir que a variável da Zaia foi substituída
+        if not phone or '{{' in str(phone):
+            error_msg = f"Webhook de qualificação recebido com telefone inválido: {phone}"
+            logger.error(error_msg)
+            return JSONResponse({"status": "invalid_phone_variable", "detail": error_msg}, status_code=400)
+
         profissao = data.get('profissao')
         motivo = data.get('motivo')
         logger.info(f"Processando qualificação de lead para {phone}")
@@ -71,6 +78,12 @@ async def handle_webhook(request: Request):
 
     # Rota 2: Webhook de Mensagem do Cliente da Z-API
     elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
+        
+        # VERIFICAÇÃO: Ignora mensagens de grupo
+        if data.get('isGroup'):
+            logger.info("Mensagem de grupo recebida. Ignorando.")
+            return JSONResponse({"status": "group_message_ignored"})
+
         phone = data.get('phone')
         sender_name = data.get('senderName')
         logger.info(f"Processando mensagem de {sender_name} ({phone})")
