@@ -139,7 +139,7 @@ class NotionService:
             if key == 'Status':
                 properties[key] = {"status": {"name": str(value)}}
             elif key == 'Nível de Qualificação':
-                properties[key] = {"select": {"name": str(value)}}
+                properties[key] = {"multi_select": [{"name": str(value)}]}
             elif key == 'Link Rápido WhatsApp':
                 properties[key] = {"url": str(value)}
             # Para outros campos, assume rich_text
