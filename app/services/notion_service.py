@@ -158,6 +158,8 @@ class NotionService:
             response.raise_for_status()
             logger.info(f"Propriedades do lead {phone} atualizadas com sucesso.")
         except Exception as e:
-            error_message = f"Erro ao atualizar propriedades no Notion para o lead {phone}: {e}"
+            # Tenta extrair a resposta de erro do Notion para um log mais detalhado
+            error_detail = e.response.text if hasattr(e, 'response') else str(e)
+            error_message = f"Erro ao atualizar propriedades no Notion para o lead {phone}: {error_detail}"
             logger.error(error_message)
             print(f"[NOTION_SERVICE_ERROR] {error_message}") 
