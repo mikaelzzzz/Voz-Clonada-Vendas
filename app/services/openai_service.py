@@ -14,61 +14,45 @@ class OpenAIService:
         # O cliente agora é assíncrono
         self.client = AsyncOpenAI(api_key=self.api_key)
 
-    async def generate_sales_message(self, lead_data: Dict) -> str:
+    async def generate_sales_summary(self, lead_data: Dict) -> str:
         """
-        Gera uma mensagem para a equipe de vendas usando o ChatGPT com base nos dados do lead.
-        
-        Args:
-            lead_data (Dict): Dados do lead do Notion
-            
-        Returns:
-            str: Mensagem personalizada gerada
+        Gera um resumo curto e estratégico sobre o lead para a equipe de vendas.
         """
-        # Criar o prompt com os dados disponíveis
+        lead_name = lead_data.get('Cliente', 'Um novo lead')
+        profession = lead_data.get('Profissão', 'não informada')
+        motivation = lead_data.get('Real Motivação', 'não informado')
+
         prompt = f"""
-        Você é um assistente de vendas especializado em escolas de inglês.
-        
-        Analise os dados do lead e crie um resumo estratégico para a equipe de vendas:
-        
+        Você é um gerente de vendas criando uma notificação para sua equipe no WhatsApp.
+        Crie uma frase curta, profissional e motivadora sobre um novo lead qualificado.
+        Varie o tom e a estrutura da frase a cada vez.
+
         Dados do lead:
-        - Nome: {lead_data.get('Cliente', '')}
-        - Profissão: {lead_data.get('Profissão', 'Não informado')}
-        - Objetivo: {lead_data.get('Objetivo', 'Não informado')}
-        - Histórico Inglês: {lead_data.get('Histórico Inglês', 'Não informado')}
-        - Real Motivação: {lead_data.get('Real Motivação', 'Não informado')}
-        - Idade: {lead_data.get('Idade', 'Não informado')}
-        - Indicação: {lead_data.get('Indicação', 'Não informado')}
-        
-        Crie uma análise para a equipe de vendas, incluindo:
-        1. Principais pontos de atenção sobre o perfil
-        2. Possíveis objeções que podem surgir
-        3. Sugestões de abordagem baseadas no perfil
-        4. Use emojis para destacar pontos importantes
-        5. Use formatação do WhatsApp (*negrito*)
-        6. Mantenha a análise objetiva e estratégica
-        7. Destaque informações relevantes para conversão
-        8. Sugira pacotes ou abordagens específicas para este perfil
+        - Nome: {lead_name}
+        - Profissão: {profession}
+        - Motivo para aprender inglês: {motivation}
+
+        Exemplos de frases que você pode criar:
+        - "Atenção time: Lead quente na área! O(A) {lead_name}, que trabalha como {profession}, quer aprender inglês por motivo de {motivation}. Isso sinaliza urgência, vamos pra cima!"
+        - "Nova oportunidade de ouro, equipe! {lead_name} ({profession}) precisa de inglês para {motivation}. Parece um cliente com grande potencial de fechamento."
+        - "Alerta de lead qualificado! {lead_name}, que atua como {profession}, está com o objetivo claro de aprender por {motivation}. É a nossa chance de mostrar nosso valor."
+
+        Agora, crie uma nova frase única e inspiradora para este lead, usando os dados fornecidos.
         """
         
         try:
             response = await self.client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "Você é um analista de vendas especializado em escolas de inglês."},
+                    {"role": "system", "content": "Você é um gerente de vendas criando uma notificação para sua equipe no WhatsApp."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7,
-                max_tokens=500
+                temperature=0.8,
+                max_tokens=150
             )
             
             return response.choices[0].message.content.strip()
         except Exception as e:
-            logger.error(f"Erro ao gerar mensagem de vendas com OpenAI: {e}")
-            # Em caso de erro, retorna uma mensagem padrão
-            return (
-                f"🎯 *Novo Lead Qualificado*\n\n"
-                f"👤 Nome: {lead_data.get('Cliente', '')}\n"
-                f"💼 Profissão: {lead_data.get('Profissão', 'Não informado')}\n"
-                f"🎯 Motivo: {lead_data.get('Real Motivação', 'Não informado')}\n\n"
-                "⚠️ Análise do ChatGPT indisponível no momento."
-            ) 
+            logger.error(f"Erro ao gerar resumo de vendas com OpenAI: {e}")
+            # Mensagem de fallback em caso de erro na API da OpenAI
+            return f"Atenção time: Novo lead qualificado! {lead_name} ({profession}) demonstrou interesse em nossos serviços por motivo de {motivation}." 

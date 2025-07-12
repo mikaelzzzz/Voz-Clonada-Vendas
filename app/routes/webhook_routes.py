@@ -56,12 +56,24 @@ async def handle_webhook(request: Request):
             # 3. Se for de alta prioridade, gera e envia a análise de vendas
             if qualification_level == 'Alto':
                 logger.info(f"Lead {phone} é de alta prioridade. Gerando alerta para equipe de vendas.")
-                lead_data = notion_service.get_lead_data_by_phone(phone)
+                lead_full_data = notion_service.get_lead_data_by_phone(phone)
 
-                if lead_data:
-                    sales_message = await openai_service.generate_sales_message(lead_data)
+                if lead_full_data and lead_full_data.get('properties'):
+                    lead_properties = lead_full_data.get('properties', {})
+                    notion_url = lead_full_data.get('url', 'URL do Notion não encontrada.')
+
+                    # Gera o resumo de texto com a IA
+                    summary_text = await openai_service.generate_sales_summary(lead_properties)
+                    
+                    # Monta a mensagem final com os links
+                    final_message = (
+                        f"{summary_text}\n\n"
+                        f"🔗 *Link do Notion:* {notion_url}\n"
+                        f"📱 *WhatsApp do Lead:* https://wa.me/{phone}"
+                    )
+
                     for sales_phone in settings.SALES_TEAM_PHONES:
-                        await ZAPIService.send_text(sales_phone, sales_message)
+                        await ZAPIService.send_text(sales_phone, final_message)
                     logger.info(f"Alerta de vendas para o lead {phone} enviado com sucesso.")
                 else:
                     logger.warning(f"Não foi possível encontrar dados do lead {phone} para gerar alerta.")

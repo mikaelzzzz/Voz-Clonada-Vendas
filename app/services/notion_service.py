@@ -48,7 +48,7 @@ class NotionService:
         return data
 
     def get_lead_data_by_phone(self, phone: str) -> dict or None:
-        """Busca os dados de um lead pelo telefone e retorna um dicionário."""
+        """Busca os dados de um lead pelo telefone e retorna um dicionário com propriedades e URL."""
         page_id = self._find_page_by_phone(phone)
         if not page_id:
             return None
@@ -58,7 +58,13 @@ class NotionService:
             response = requests.get(url, headers=self.headers)
             response.raise_for_status()
             page_data = response.json()
-            return self._parse_properties(page_data.get("properties", {}))
+            
+            # Estrutura o retorno para incluir propriedades e a URL da página
+            parsed_data = {
+                "properties": self._parse_properties(page_data.get("properties", {})),
+                "url": page_data.get("url")
+            }
+            return parsed_data
         except Exception as e:
             error_message = f"Erro ao buscar dados do lead {phone} no Notion: {e}"
             logger.error(error_message)
