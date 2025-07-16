@@ -46,6 +46,8 @@ class NotionService:
                 data[name] = prop['rich_text'][0]['text']['content']
             elif prop_type == 'email' and prop['email']:
                 data[name] = prop['email']
+            elif prop_type == 'checkbox':
+                data[name] = prop.get('checkbox', False)
             # Adicione outros tipos se necessário
         return data
 
@@ -160,6 +162,8 @@ class NotionService:
                 properties[key] = {"multi_select": [{"name": str(value)}]}
             elif key == 'Link Rápido WhatsApp':
                 properties[key] = {"url": str(value)}
+            elif key == 'Alerta Enviado':
+                properties[key] = {"checkbox": bool(value)}
             # Para outros campos, assume rich_text
             else:
                 properties[key] = {"rich_text": [{"text": {"content": str(value)}}]}

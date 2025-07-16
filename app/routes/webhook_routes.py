@@ -55,31 +55,35 @@ async def handle_webhook(request: Request):
             }
             notion_service.update_lead_properties(phone, updates)
             
-            # 3. Se for de alta prioridade, gera e envia a análise de vendas
-            if qualification_level == 'Alto':
-                logger.info(f"Lead {phone} é de alta prioridade. Gerando alerta para equipe de vendas.")
-                lead_full_data = notion_service.get_lead_data_by_phone(phone)
+            # Busca os dados completos do lead para tomar a decisão
+            lead_full_data = notion_service.get_lead_data_by_phone(phone)
+            lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
+            alerta_enviado = lead_properties.get('Alerta Enviado', False)
 
-                if lead_full_data and lead_full_data.get('properties'):
-                    lead_properties = lead_full_data.get('properties', {})
-                    notion_url = lead_full_data.get('url', 'URL do Notion não encontrada.')
+            # 3. Se for de alta prioridade E o alerta ainda não foi enviado, gera e envia a análise
+            if qualification_level == 'Alto' and not alerta_enviado:
+                logger.info(f"Lead {phone} é de alta prioridade e o alerta ainda não foi enviado. Notificando a equipe.")
+                
+                # Gera o resumo de texto com a IA
+                summary_text = await openai_service.generate_sales_summary(lead_properties)
+                
+                notion_url = lead_full_data.get('url', 'URL do Notion não encontrada.')
+                final_message = (
+                    f"{summary_text}\n\n"
+                    f"🔗 *Link do Notion:* {notion_url}\n"
+                    f"📱 *WhatsApp do Lead:* https://wa.me/{phone}"
+                )
 
-                    # Gera o resumo de texto com a IA
-                    summary_text = await openai_service.generate_sales_summary(lead_properties)
-                    
-                    # Monta a mensagem final com os links
-                    final_message = (
-                        f"{summary_text}\n\n"
-                        f"🔗 *Link do Notion:* {notion_url}\n"
-                        f"📱 *WhatsApp do Lead:* https://wa.me/{phone}"
-                    )
+                for sales_phone in settings.SALES_TEAM_PHONES:
+                    await ZAPIService.send_text(sales_phone, final_message)
+                
+                # Marca que o alerta foi enviado para não repetir
+                notion_service.update_lead_properties(phone, {"Alerta Enviado": True})
+                logger.info(f"Alerta de vendas para o lead {phone} enviado e marcado como concluído.")
 
-                    for sales_phone in settings.SALES_TEAM_PHONES:
-                        await ZAPIService.send_text(sales_phone, final_message)
-                    logger.info(f"Alerta de vendas para o lead {phone} enviado com sucesso.")
-                else:
-                    logger.warning(f"Não foi possível encontrar dados do lead {phone} para gerar alerta.")
-            else:
+            elif alerta_enviado:
+                logger.info(f"Alerta para o lead {phone} já foi enviado anteriormente. Ignorando.")
+            else: # Lead de baixa prioridade
                 logger.info(f"Lead {phone} é de baixa prioridade. Nenhuma notificação de vendas será enviada.")
 
             return JSONResponse({"status": "lead_qualified_processed"})
