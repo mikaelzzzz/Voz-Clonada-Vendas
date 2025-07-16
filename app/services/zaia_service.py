@@ -222,20 +222,15 @@ class ZaiaService:
     @staticmethod
     async def send_message(message: dict, metadata: dict = None):
         """
-        ESTRATÉGIA COMPROVADA: Contexto automático com externalId e metadados.
-        
-        ✅ TESTES CONFIRMARAM:
-        - A Zaia mantém contexto perfeitamente usando apenas externalGenerativeChatExternalId
-        - Mesmo chat ID é reutilizado automaticamente para o mesmo telefone
-        - Contexto 100% preservado (nome, profissão, histórico completo)
-        - Não precisa gerenciar chat IDs manualmente
+        Envia mensagem para a Zaia usando o telefone como ID de contexto único
+        e preenchendo o campo 'custom' com metadados.
         
         Args:
             message: Dicionário contendo o texto e o telefone.
-            metadata: Dicionário com dados extras (ex: {'nome': 'Mikael'}) para preencher variáveis na Zaia.
+            metadata: Dicionário com dados extras (ex: {'senderName': 'Mikael'}) para o campo 'custom'.
         """
         logger.info(f"=== ENVIANDO MENSAGEM ===")
-        logger.info(f"📨 Dados: {message} | Metadados: {metadata}")
+        logger.info(f"📨 Dados: {message} | Metadados para custom: {metadata}")
         
         settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
@@ -260,28 +255,20 @@ class ZaiaService:
         logger.info(f"📱 Mensagem: '{message_text}' | Telefone: {phone}")
         
         try:
-            # ESTRATÉGIA COMPROVADA: Usar APENAS externalId para contexto automático!
-            # ✅ TESTES CONFIRMARAM: A Zaia mantém contexto perfeitamente com externalId
-            # ✅ Mesmo chat ID reutilizado automaticamente
-            # ✅ Contexto 100% preservado (nome, profissão, cidade, etc.)
-            # ✅ Não precisa gerenciar chat IDs manualmente
-            
-            logger.info(f"📱 Enviando mensagem com contexto automático para: {phone}")
-            
-            # Payload SIMPLES e EFICAZ - apenas externalId
+            # Monta o campo 'custom' dinamicamente
+            custom_data = {"whatsapp": phone}
+            if metadata:
+                custom_data.update(metadata)
+
             payload = {
                 "agentId": int(agent_id),
                 "externalGenerativeChatExternalId": phone,  # TELEFONE = CONTEXTO ÚNICO
                 "prompt": message_text,
                 "streaming": False,
                 "asMarkdown": False,
-                "custom": {"whatsapp": phone}
+                "custom": custom_data
             }
             
-            # Adiciona os metadados ao payload se eles existirem
-            if metadata:
-                payload["data"] = metadata
-
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
             logger.info(f"📤 Enviando mensagem para Zaia...")
             logger.info(f"📤 Payload completo: {payload}")

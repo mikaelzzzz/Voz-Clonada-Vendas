@@ -117,8 +117,8 @@ async def handle_webhook(request: Request):
                 transcript = await whisper_service.transcribe_audio(audio_url)
                 
                 zaia_service = ZaiaService()
-                # Passa o nome do cliente nos metadados
-                metadata = {"nome": sender_name}
+                # Passa o nome e o telefone do cliente nos metadados para o campo 'custom'
+                metadata = {"senderName": sender_name, "phone": phone}
                 zaia_response = await zaia_service.send_message({'transcript': transcript, 'phone': phone}, metadata=metadata)
                 
                 if zaia_response.get('text'):
@@ -130,8 +130,8 @@ async def handle_webhook(request: Request):
                 # Processamento de texto...
                 message_text = data['text'].get('message', '')
                 zaia_service = ZaiaService()
-                # Passa o nome do cliente nos metadados
-                metadata = {"nome": sender_name}
+                # Passa o nome e o telefone do cliente nos metadados para o campo 'custom'
+                metadata = {"senderName": sender_name, "phone": phone}
                 zaia_response = await zaia_service.send_message({'text': {'body': message_text}, 'phone': phone}, metadata=metadata)
                 
                 if zaia_response.get('text'):
