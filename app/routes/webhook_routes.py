@@ -151,7 +151,7 @@ async def handle_webhook(request: Request):
                 if is_audio:
                     elevenlabs_service = ElevenLabsService()
                     audio_bytes = elevenlabs_service.generate_audio(response_message)
-                    await ZAPIService.send_audio_with_typing(phone, audio_bytes)
+                    await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=response_message)
                 else:
                     await ZAPIService.send_text_with_typing(phone, response_message)
                 return JSONResponse({"status": "existing_lead_greeted"})
@@ -188,7 +188,7 @@ async def handle_webhook(request: Request):
                     logger.info("Resposta para áudio sem link. Gerando áudio.")
                     elevenlabs_service = ElevenLabsService()
                     audio_bytes = elevenlabs_service.generate_audio(ai_response_text)
-                    await ZAPIService.send_audio_with_typing(phone, audio_bytes)
+                    await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=ai_response_text)
                 # Em todos os outros casos (resposta de texto, ou resposta com link), envia texto
                 else:
                     if contains_link:

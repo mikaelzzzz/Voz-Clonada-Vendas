@@ -22,6 +22,21 @@ class ZAPIService:
         return max(min_duration, min(calculated_duration, max_duration))
 
     @staticmethod
+    def calculate_audio_duration(message: str) -> float:
+        """
+        Calcula a duração da fala para uma mensagem de áudio.
+        Assume uma velocidade média de fala.
+        """
+        # Velocidade média de fala: ~150 palavras por minuto. Uma palavra tem ~5 caracteres.
+        # 150 * 5 = 750 caracteres por minuto / 60s = ~12.5 caracteres por segundo.
+        chars_per_second = 12.5
+        min_duration = 1.5  # Mínimo para parecer que gravou algo
+        max_duration = 10.0 # Máximo para não deixar o usuário esperando muito
+        
+        calculated_duration = len(message) / chars_per_second
+        return max(min_duration, min(calculated_duration, max_duration))
+
+    @staticmethod
     async def send_text_with_typing(phone: str, message: str):
         """
         Envia mensagem de texto com simulação de digitação usando o delayTyping da Z-API.
@@ -68,9 +83,10 @@ class ZAPIService:
                 return {"error": str(e)}
 
     @staticmethod
-    async def send_audio_with_typing(phone: str, audio_bytes: bytes, typing_duration: float = 1.5):
+    async def send_audio_with_typing(phone: str, audio_bytes: bytes, original_text: str):
         """
-        Envia áudio, usando o delayMessage da Z-API para simular o tempo de gravação.
+        Envia áudio, usando um delayMessage variável baseado no texto original
+        para simular o tempo de gravação.
         """
         settings = Settings()
         url = f"{settings.Z_API_BASE_URL}/send-audio"
@@ -81,10 +97,13 @@ class ZAPIService:
         
         audio_data_url = f"data:audio/ogg;base64,{base64.b64encode(audio_bytes).decode('utf-8')}"
         
+        # Calcula a duração da gravação com base no texto
+        recording_duration = ZAPIService.calculate_audio_duration(original_text)
+
         payload = {
             "phone": phone,
             "audio": audio_data_url,
-            "delayMessage": int(typing_duration),
+            "delayMessage": int(recording_duration),
             "waveform": True
         }
         
