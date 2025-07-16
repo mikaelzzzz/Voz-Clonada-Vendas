@@ -132,14 +132,20 @@ async def handle_webhook(request: Request):
             lead_full_data = notion_service.get_lead_data_by_phone(phone)
             lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
 
-            # Constrói o prompt final para a Zaia, integrando o contexto
+            # Constrói o prompt final para a Zaia, de forma inteligente
             def build_final_prompt(base_message: str) -> str:
-                parts = []
-                # Adiciona o nome se já conhecido
-                if lead_properties.get('Cliente'):
-                    parts.append(f"Meu nome é {lead_properties.get('Cliente')}.")
-                # Adiciona a profissão se já conhecida
-                if lead_properties.get('Profissão'):
+                normalized_message = base_message.strip().lower()
+                greetings = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+                
+                client_name = lead_properties.get('Cliente', 'cliente')
+
+                # Se for um simples cumprimento, cria um prompt específico para reengajamento
+                if normalized_message in greetings:
+                    return f"Instruções para a IA: O cliente, {client_name}, está apenas te cumprimentando. Responda de forma amigável e pergunte como pode ajudar hoje."
+                
+                # Caso contrário, constrói o prompt detalhado com o contexto do CRM
+                parts = [f"Meu nome é {client_name}."]
+                if lead_properties.get('Profissão') and lead_properties.get('Profissão') != 'não informado':
                     parts.append(f"Eu trabalho como {lead_properties.get('Profissão')}.")
                 
                 parts.append(f"Minha pergunta é: {base_message}")
