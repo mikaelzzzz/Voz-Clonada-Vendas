@@ -141,7 +141,7 @@ async def handle_webhook(request: Request):
 
                 # Se for um simples cumprimento, cria um prompt específico para reengajamento
                 if normalized_message in greetings:
-                    return f"Instruções para a IA: O cliente, {client_name}, está apenas te cumprimentando. Responda de forma amigável e pergunte como pode ajudar hoje."
+                    return f"Instruções para a IA: O cliente, {client_name}, está apenas te cumprimentando. Comece sua resposta EXATAMENTE com 'Hello Hello, {client_name}!' e depois continue a conversa de forma amigável, perguntando como pode ajudar."
                 
                 # Caso contrário, constrói o prompt detalhado com o contexto do CRM
                 parts = [f"Meu nome é {client_name}."]
