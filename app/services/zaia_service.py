@@ -222,11 +222,11 @@ class ZaiaService:
     @staticmethod
     async def send_message(message: dict, metadata: dict = None):
         """
-        Envia mensagem para a Zaia usando o telefone como ID de contexto único.
-        Os metadados são agora enviados pela Z-API, não aqui.
+        Envia mensagem para a Zaia, passando metadados no campo 'custom'
+        para personalização imediata.
         """
         logger.info(f"=== ENVIANDO MENSAGEM PARA ZAIA ===")
-        logger.info(f"📨 Dados: {message}")
+        logger.info(f"📨 Dados: {message} | Metadados: {metadata}")
         
         settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
@@ -251,18 +251,24 @@ class ZaiaService:
         logger.info(f"📱 Mensagem: '{message_text}' | Telefone: {phone}")
         
         try:
+            # Monta o campo 'custom' dinamicamente
+            custom_data = {"whatsapp": phone}
+            if metadata:
+                custom_data.update(metadata)
+
             payload = {
                 "agentId": int(agent_id),
                 "externalGenerativeChatExternalId": phone,
                 "prompt": message_text,
                 "streaming": False,
-                "asMarkdown": False
+                "asMarkdown": False,
+                "custom": custom_data
             }
             
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
             logger.info(f"📤 Enviando mensagem para Zaia...")
             logger.info(f"📤 Payload completo: {payload}")
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(url_message, headers=headers, json=payload) as response:
                     logger.info(f"📥 Status: {response.status}")

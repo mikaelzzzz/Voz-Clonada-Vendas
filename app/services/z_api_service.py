@@ -90,9 +90,9 @@ class ZAPIService:
         return max(min_duration, min(calculated_duration, max_duration))
 
     @staticmethod
-    async def send_text_with_typing(phone: str, message: str, typing_duration: float = None, custom_data: dict = None):
+    async def send_text_with_typing(phone: str, message: str, typing_duration: float = None):
         """
-        Envia mensagem de texto com simulação de digitação e dados customizados.
+        Envia mensagem de texto com simulação de digitação.
         """
         if typing_duration is None:
             typing_duration = ZAPIService.calculate_typing_duration(message)
@@ -105,12 +105,12 @@ class ZAPIService:
         
         # Para de simular digitação e envia a mensagem
         await ZAPIService.stop_typing(phone)
-        return await ZAPIService.send_text(phone, message, custom_data)
+        return await ZAPIService.send_text(phone, message)
 
     @staticmethod
-    async def send_text(phone: str, message: str, custom_data: dict = None):
+    async def send_text(phone: str, message: str):
         """
-        Envia mensagem de texto via Z-API, com suporte a dados customizados.
+        Envia mensagem de texto via Z-API.
         """
         settings = Settings()
         url = f"{settings.Z_API_BASE_URL}/send-text"
@@ -123,10 +123,6 @@ class ZAPIService:
             "phone": phone,
             "message": message
         }
-
-        # Adiciona customData se fornecido
-        if custom_data:
-            payload["customData"] = custom_data
         
         async with aiohttp.ClientSession() as session:
             try:
