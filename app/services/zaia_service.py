@@ -223,7 +223,7 @@ class ZaiaService:
     async def _ensure_chat_session_exists(phone: str):
         """
         Garante que um chat exista e esteja atualizado com o número de telefone.
-        Usa o endpoint create-or-update para uma operação segura e idempotente.
+        Usa o endpoint upsert para uma operação segura e idempotente.
         """
         settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
@@ -231,7 +231,7 @@ class ZaiaService:
         api_key = settings.ZAIA_API_KEY
         
         headers = { "Authorization": f"Bearer {api_key}", "Content-Type": "application/json" }
-        url = f"{base_url}/v1.1/api/external-generative-chat/create-or-update"
+        url = f"{base_url}/v1.1/api/external-generative-chat/upsert"
 
         payload = {
             "agentId": int(agent_id),
