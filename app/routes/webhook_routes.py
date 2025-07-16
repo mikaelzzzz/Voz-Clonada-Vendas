@@ -132,7 +132,8 @@ async def handle_webhook(request: Request):
                 zaia_service = ZaiaService()
                 
                 # Passa o nome do cliente nos metadados para personalização na Zaia
-                metadata = {"senderName": sender_name}
+                # Enviando 'name' e 'senderName' para garantir compatibilidade
+                metadata = {"name": sender_name, "senderName": sender_name}
                 zaia_response = await zaia_service.send_message(
                     {'text': {'body': message_text}, 'phone': phone},
                     metadata=metadata
