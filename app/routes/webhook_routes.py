@@ -121,7 +121,7 @@ async def handle_webhook(request: Request):
             # Se for um novo lead, nossa aplicação envia a primeira saudação
             if is_new_lead:
                 logger.info(f"Novo lead detectado ({phone}). Enviando saudação personalizada diretamente.")
-                greeting_message = f"Olá, {sender_name}! Que bom ter você por aqui. Como posso ajudar hoje?"
+                greeting_message = f"Hello Hello, {sender_name}! Que bom ter você por aqui. Como posso te ajudar hoje?"
                 await ZAPIService.send_text_with_typing(phone, greeting_message)
                 return JSONResponse({"status": "new_lead_greeted"})
 
@@ -142,7 +142,7 @@ async def handle_webhook(request: Request):
             # Se for um simples cumprimento, nosso código responde diretamente
             if normalized_message in greetings:
                 logger.info("Mensagem é um cumprimento. Respondendo diretamente.")
-                response_message = f"Hello Hello, {sender_name}! Como posso te ajudar hoje?"
+                response_message = f"Hello Hello, {sender_name}! Que bom te ver de novo. Como posso ajudar?"
                 # Se a mensagem original era áudio, respondemos com áudio
                 if is_audio:
                     elevenlabs_service = ElevenLabsService()
