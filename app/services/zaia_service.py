@@ -220,10 +220,42 @@ class ZaiaService:
             raise Exception(f"Erro de rede ao criar chat: {str(e)}")
 
     @staticmethod
+    async def _ensure_chat_session_exists(phone: str):
+        """
+        Garante que um chat exista e esteja atualizado com o número de telefone.
+        Usa o endpoint create-or-update para uma operação segura e idempotente.
+        """
+        settings = Settings()
+        base_url = settings.ZAIA_BASE_URL.rstrip("/")
+        agent_id = settings.ZAIA_AGENT_ID
+        api_key = settings.ZAIA_API_KEY
+        
+        headers = { "Authorization": f"Bearer {api_key}", "Content-Type": "application/json" }
+        url = f"{base_url}/v1.1/api/external-generative-chat/create-or-update"
+
+        payload = {
+            "agentId": int(agent_id),
+            "externalId": phone, # Usa o telefone como ID externo
+            "phoneNumber": phone # Garante que a propriedade do chat seja preenchida
+        }
+
+        try:
+            logger.info(f"🔄 Garantindo a existência da sessão do chat para {phone}...")
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=payload, timeout=10) as response:
+                    if response.status not in [200, 201]:
+                        error_text = await response.text()
+                        logger.warning(f"⚠️ Não foi possível garantir a sessão do chat para {phone}: {response.status} - {error_text}")
+                    else:
+                        logger.info(f"✅ Sessão do chat para {phone} garantida.")
+        except Exception as e:
+            logger.error(f"❌ Erro crítico ao garantir a sessão do chat para {phone}: {e}")
+            # Não lança exceção para não parar o fluxo principal
+            
+    @staticmethod
     async def send_message(message: dict, metadata: dict = None):
         """
-        Envia mensagem para a Zaia usando o telefone como ID de contexto único
-        e preenchendo o campo 'custom' com metadados.
+        Envia mensagem para a Zaia, garantindo que a sessão do chat exista primeiro.
         
         Args:
             message: Dicionário contendo o texto e o telefone.
@@ -255,7 +287,10 @@ class ZaiaService:
         logger.info(f"📱 Mensagem: '{message_text}' | Telefone: {phone}")
         
         try:
-            # Monta o campo 'custom' dinamicamente
+            # PASSO 1: Garante que o chat existe e tem o telefone associado
+            await ZaiaService._ensure_chat_session_exists(phone)
+
+            # PASSO 2: Envia a mensagem com os dados customizados
             custom_data = {"whatsapp": phone}
             if metadata:
                 custom_data.update(metadata)
