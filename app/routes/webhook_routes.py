@@ -1,4 +1,5 @@
 import logging
+import re
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from app.services.z_api_service import ZAPIService
@@ -22,17 +23,18 @@ async def handle_webhook(request: Request):
 
     # Rota 1: Webhook de Qualificação de Lead da Zaia
     if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
-        phone = data.get('whatsapp')
+        phone_raw = data.get('whatsapp')
 
         # Validação para garantir que a variável da Zaia foi substituída
-        if not phone or '{{' in str(phone):
-            error_msg = f"Webhook de qualificação recebido com telefone inválido: {phone}"
+        if not phone_raw or '{{' in str(phone_raw):
+            error_msg = f"Webhook de qualificação recebido com telefone inválido: {phone_raw}"
             logger.error(error_msg)
             return JSONResponse({"status": "invalid_phone_variable", "detail": error_msg}, status_code=400)
 
+        phone = re.sub(r'\D', '', str(phone_raw)) # Normaliza o número, mantendo apenas dígitos
         profissao = data.get('profissao')
         motivo = data.get('motivo')
-        logger.info(f"Processando qualificação de lead para {phone}")
+        logger.info(f"Processando qualificação de lead para {phone} (original: {phone_raw})")
 
         try:
             notion_service = NotionService()
@@ -96,30 +98,61 @@ async def handle_webhook(request: Request):
             logger.info("Mensagem de grupo recebida. Ignorando.")
             return JSONResponse({"status": "group_message_ignored"})
 
-        phone = data.get('phone')
+        phone_raw = data.get('phone')
         sender_name = data.get('senderName')
+        phone = re.sub(r'\D', '', str(phone_raw)) # Normaliza o número
+
+        # Validação básica do número normalizado
+        if not phone or not sender_name:
+            logger.warning(f"Telefone ou nome do remetente inválidos após normalização. Original: {phone_raw}")
+            return JSONResponse({"status": "invalid_sender_data"})
+
         logger.info(f"Processando mensagem de {sender_name} ({phone})")
 
         try:
-            # Garante que o lead existe no Notion
+            # Garante que o lead existe no Notion e verifica se é novo
             notion_service = NotionService()
-            notion_service.create_or_update_lead(
+            is_new_lead = notion_service.create_or_update_lead(
                 sender_name=sender_name,
                 phone=phone,
                 photo_url=data.get('photo')
             )
 
-            # Continua com o fluxo de IA (áudio ou texto)
+            # Se for um novo lead, nossa aplicação envia a primeira saudação
+            if is_new_lead:
+                logger.info(f"Novo lead detectado ({phone}). Enviando saudação personalizada diretamente.")
+                greeting_message = f"Olá, {sender_name}! Que bom ter você por aqui. Como posso ajudar hoje?"
+                await ZAPIService.send_text_with_typing(phone, greeting_message)
+                return JSONResponse({"status": "new_lead_greeted"})
+
+            # Se não for novo, continua o fluxo normal com a Zaia, mas enriquecendo o contexto
+            logger.info(f"Lead existente ({phone}). Encaminhando para a Zaia com contexto enriquecido.")
+            
+            # Busca os dados mais recentes do lead no Notion
+            lead_full_data = notion_service.get_lead_data_by_phone(phone)
+            lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
+
+            # Constrói um pré-prompt com o contexto do CRM
+            context_prompt = ""
+            if lead_properties:
+                context_prompt = (
+                    "Instruções para a IA: Você está falando com "
+                    f"{lead_properties.get('Cliente', 'um cliente')}, que trabalha como "
+                    f"{lead_properties.get('Profissão', 'não informado')} e tem o nível de qualificação "
+                    f"'{lead_properties.get('Nível de Qualificação', 'não definido')}'. "
+                    "Use essas informações para personalizar sua resposta. A última mensagem do cliente foi:"
+                )
+
             if 'audio' in data and data.get('audio'):
                 # Processamento de áudio...
                 audio_url = data['audio']['audioUrl']
                 whisper_service = WhisperService()
                 transcript = await whisper_service.transcribe_audio(audio_url)
                 
+                final_prompt = f"{context_prompt} '{transcript}'"
+
                 zaia_service = ZaiaService()
-                # Passa o nome e o telefone do cliente nos metadados para o campo 'custom'
-                metadata = {"senderName": sender_name, "phone": phone}
-                zaia_response = await zaia_service.send_message({'transcript': transcript, 'phone': phone}, metadata=metadata)
+                zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
                 
                 if zaia_response.get('text'):
                     elevenlabs_service = ElevenLabsService()
@@ -129,15 +162,10 @@ async def handle_webhook(request: Request):
             elif 'text' in data and data.get('text'):
                 # Processamento de texto...
                 message_text = data['text'].get('message', '')
+                final_prompt = f"{context_prompt} '{message_text}'"
+
                 zaia_service = ZaiaService()
-                
-                # Passa o nome do cliente nos metadados para personalização na Zaia
-                # Enviando 'name' e 'senderName' para garantir compatibilidade
-                metadata = {"name": sender_name, "senderName": sender_name}
-                zaia_response = await zaia_service.send_message(
-                    {'text': {'body': message_text}, 'phone': phone},
-                    metadata=metadata
-                )
+                zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
                 
                 if zaia_response.get('text'):
                     await ZAPIService.send_text_with_typing(phone, zaia_response['text'])

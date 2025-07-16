@@ -1,5 +1,7 @@
 import logging
 import requests
+import time
+import random
 from app.config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -71,16 +73,24 @@ class NotionService:
             print(f"[NOTION_SERVICE_ERROR] {error_message}")
             return None
 
-    def create_or_update_lead(self, sender_name: str, phone: str, photo_url: str = None):
+    def create_or_update_lead(self, sender_name: str, phone: str, photo_url: str = None) -> bool:
         """
-        Cria uma nova página no Notion para um lead se não existir,
-        ou atualiza a capa se já existir.
+        Cria ou atualiza um lead no Notion, com lógica de dupla verificação
+        para prevenir duplicatas por condição de corrida.
+        Retorna True se um novo lead foi criado, False se foi atualizado.
         """
         if not self.api_key or not self.database_id:
             logger.warning("Credenciais do Notion não configuradas. Serviço desabilitado.")
-            return
+            return False
 
         page_id = self._find_page_by_phone(phone)
+
+        # Lógica de dupla verificação para evitar race conditions
+        if not page_id:
+            time.sleep(random.uniform(0.5, 1.5)) # Pausa aleatória para dessincronizar processos
+            page_id = self._find_page_by_phone(phone) # Verifica novamente
+
+        is_new_lead = not bool(page_id)
 
         properties = {
             "Cliente": {"title": [{"text": {"content": sender_name}}]},
@@ -118,9 +128,11 @@ class NotionService:
                 response.raise_for_status()
                 logger.info(f"Novo lead {phone} criado no Notion com sucesso.")
             except Exception as e:
-                error_message = f"Erro ao criar página no Notion para o lead {phone}: {e}"
+                error_message = f"Erro ao criar página no Notion para o lead {phone}: {e.response.text if hasattr(e, 'response') else str(e)}"
                 logger.error(error_message)
-                print(f"[NOTION_SERVICE_ERROR] {error_message}") # Print para depuração
+                print(f"[NOTION_SERVICE_ERROR] {error_message}")
+        
+        return is_new_lead
 
     def update_lead_properties(self, phone: str, updates: dict):
         """

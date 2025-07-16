@@ -220,13 +220,13 @@ class ZaiaService:
             raise Exception(f"Erro de rede ao criar chat: {str(e)}")
 
     @staticmethod
-    async def send_message(message: dict, metadata: dict = None):
+    async def send_message(message: dict):
         """
-        Envia mensagem para a Zaia, passando metadados no campo 'custom'
-        para personalização imediata.
+        Envia mensagem para a Zaia usando o telefone como ID de contexto único.
+        A personalização agora é feita na Zaia com a variável systemwhatsapp.senderName.
         """
         logger.info(f"=== ENVIANDO MENSAGEM PARA ZAIA ===")
-        logger.info(f"📨 Dados: {message} | Metadados: {metadata}")
+        logger.info(f"📨 Dados: {message}")
         
         settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
@@ -239,10 +239,10 @@ class ZaiaService:
             "Accept": "application/json"
         }
         
-        # Extrair dados da mensagem
-        message_text = message.get('transcript') or message.get('text', {}).get('body')
+        # Extrai o texto do prompt (que agora pode ser complexo)
+        message_text = message.get('text')
         if not message_text:
-            raise Exception("Texto da mensagem não encontrado")
+            raise Exception("Texto da mensagem (prompt) não encontrado")
             
         phone = message.get('phone')
         if not phone:
@@ -251,18 +251,12 @@ class ZaiaService:
         logger.info(f"📱 Mensagem: '{message_text}' | Telefone: {phone}")
         
         try:
-            # Monta o campo 'custom' dinamicamente
-            custom_data = {"whatsapp": phone}
-            if metadata:
-                custom_data.update(metadata)
-
             payload = {
                 "agentId": int(agent_id),
                 "externalGenerativeChatExternalId": phone,
                 "prompt": message_text,
                 "streaming": False,
                 "asMarkdown": False,
-                "custom": custom_data
             }
             
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
