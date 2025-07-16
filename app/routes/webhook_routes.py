@@ -177,13 +177,23 @@ async def handle_webhook(request: Request):
             zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
             
             if zaia_response.get('text'):
-                 # Se a mensagem original era áudio, respondemos com áudio
-                if is_audio:
+                ai_response_text = zaia_response.get('text')
+                
+                # Regex para detectar URLs na resposta da IA
+                url_pattern = r'https?://[^\s]+'
+                contains_link = re.search(url_pattern, ai_response_text)
+
+                # Se a mensagem original era áudio E a resposta NÃO contém link, envia áudio
+                if is_audio and not contains_link:
+                    logger.info("Resposta para áudio sem link. Gerando áudio.")
                     elevenlabs_service = ElevenLabsService()
-                    audio_bytes = elevenlabs_service.generate_audio(zaia_response['text'])
+                    audio_bytes = elevenlabs_service.generate_audio(ai_response_text)
                     await ZAPIService.send_audio_with_typing(phone, audio_bytes)
+                # Em todos os outros casos (resposta de texto, ou resposta com link), envia texto
                 else:
-                    await ZAPIService.send_text_with_typing(phone, zaia_response['text'])
+                    if contains_link:
+                        logger.info("Resposta contém um link. Enviando como texto por padrão.")
+                    await ZAPIService.send_text_with_typing(phone, ai_response_text)
             
             return JSONResponse({"status": "message_processed_by_zaia"})
 
