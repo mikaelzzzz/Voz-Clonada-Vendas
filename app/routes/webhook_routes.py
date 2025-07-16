@@ -125,62 +125,63 @@ async def handle_webhook(request: Request):
                 await ZAPIService.send_text_with_typing(phone, greeting_message)
                 return JSONResponse({"status": "new_lead_greeted"})
 
-            # Se não for novo, continua o fluxo normal com a Zaia, mas enriquecendo o contexto
-            logger.info(f"Lead existente ({phone}). Encaminhando para a Zaia com contexto enriquecido.")
-            
-            # Busca os dados mais recentes do lead no Notion
+            # Se não for novo, o tratamento inteligente começa aqui
+            logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
+
+            message_text = ""
+            is_audio = 'audio' in data and data.get('audio')
+            if is_audio:
+                whisper_service = WhisperService()
+                message_text = await whisper_service.transcribe_audio(data['audio']['audioUrl'])
+            elif 'text' in data and data.get('text'):
+                message_text = data['text'].get('message', '')
+
+            normalized_message = message_text.strip().lower()
+            greetings = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+
+            # Se for um simples cumprimento, nosso código responde diretamente
+            if normalized_message in greetings:
+                logger.info("Mensagem é um cumprimento. Respondendo diretamente.")
+                response_message = f"Hello Hello, {sender_name}! Como posso te ajudar hoje?"
+                # Se a mensagem original era áudio, respondemos com áudio
+                if is_audio:
+                    elevenlabs_service = ElevenLabsService()
+                    audio_bytes = elevenlabs_service.generate_audio(response_message)
+                    await ZAPIService.send_audio_with_typing(phone, audio_bytes)
+                else:
+                    await ZAPIService.send_text_with_typing(phone, response_message)
+                return JSONResponse({"status": "existing_lead_greeted"})
+
+            # Se for uma pergunta real, enriquecemos o contexto e enviamos para a Zaia
+            logger.info("Mensagem é uma pergunta. Enviando para a Zaia com contexto.")
             lead_full_data = notion_service.get_lead_data_by_phone(phone)
             lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
 
-            # Constrói o prompt final para a Zaia, de forma inteligente
+            # Constrói o prompt final para a Zaia
             def build_final_prompt(base_message: str) -> str:
-                normalized_message = base_message.strip().lower()
-                greetings = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'opa']
-                
                 client_name = lead_properties.get('Cliente', 'cliente')
-
-                # Se for um simples cumprimento, cria um prompt específico para reengajamento
-                if normalized_message in greetings:
-                    return f"Instruções para a IA: O cliente, {client_name}, está apenas te cumprimentando. Comece sua resposta EXATAMENTE com 'Hello Hello, {client_name}!' e depois continue a conversa de forma amigável, perguntando como pode ajudar."
-                
-                # Caso contrário, constrói o prompt detalhado com o contexto do CRM
                 parts = [f"Meu nome é {client_name}."]
                 if lead_properties.get('Profissão') and lead_properties.get('Profissão') != 'não informado':
                     parts.append(f"Eu trabalho como {lead_properties.get('Profissão')}.")
                 
                 parts.append(f"Minha pergunta é: {base_message}")
                 return " ".join(parts)
+            
+            final_prompt = build_final_prompt(message_text)
 
-            if 'audio' in data and data.get('audio'):
-                # Processamento de áudio...
-                audio_url = data['audio']['audioUrl']
-                whisper_service = WhisperService()
-                transcript = await whisper_service.transcribe_audio(audio_url)
-                
-                final_prompt = build_final_prompt(transcript)
-
-                zaia_service = ZaiaService()
-                # Remove o envio de dados iniciais, pois já estão no prompt
-                zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
-                
-                if zaia_response.get('text'):
+            zaia_service = ZaiaService()
+            zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
+            
+            if zaia_response.get('text'):
+                 # Se a mensagem original era áudio, respondemos com áudio
+                if is_audio:
                     elevenlabs_service = ElevenLabsService()
                     audio_bytes = elevenlabs_service.generate_audio(zaia_response['text'])
                     await ZAPIService.send_audio_with_typing(phone, audio_bytes)
-
-            elif 'text' in data and data.get('text'):
-                # Processamento de texto...
-                message_text = data['text'].get('message', '')
-                final_prompt = build_final_prompt(message_text)
-
-                zaia_service = ZaiaService()
-                 # Remove o envio de dados iniciais, pois já estão no prompt
-                zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
-                
-                if zaia_response.get('text'):
+                else:
                     await ZAPIService.send_text_with_typing(phone, zaia_response['text'])
             
-            return JSONResponse({"status": "message_processed"})
+            return JSONResponse({"status": "message_processed_by_zaia"})
 
         except Exception as e:
             error_message = f"Erro ao processar mensagem de {phone}: {e}"
