@@ -165,7 +165,14 @@ async def handle_webhook(request: Request):
                 final_prompt = f"{context_prompt} '{message_text}'"
 
                 zaia_service = ZaiaService()
-                zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
+                
+                # Pré-preenche a variável @data.nome com o nome do cliente
+                initial_zaia_data = {"nome": lead_properties.get('Cliente')}
+
+                zaia_response = await zaia_service.send_message(
+                    {'text': final_prompt, 'phone': phone},
+                    initial_data=initial_zaia_data
+                )
                 
                 if zaia_response.get('text'):
                     await ZAPIService.send_text_with_typing(phone, zaia_response['text'])

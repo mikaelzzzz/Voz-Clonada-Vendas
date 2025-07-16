@@ -220,13 +220,14 @@ class ZaiaService:
             raise Exception(f"Erro de rede ao criar chat: {str(e)}")
 
     @staticmethod
-    async def send_message(message: dict):
+    async def send_message(message: dict, metadata: dict = None, initial_data: dict = None):
         """
-        Envia mensagem para a Zaia usando o telefone como ID de contexto único.
-        A personalização agora é feita na Zaia com a variável systemwhatsapp.senderName.
+        Envia mensagem para a Zaia.
+        - metadata: para o campo 'custom' (variáveis {{custom.}})
+        - initial_data: para o campo 'data' (variáveis {{data.}})
         """
         logger.info(f"=== ENVIANDO MENSAGEM PARA ZAIA ===")
-        logger.info(f"📨 Dados: {message}")
+        logger.info(f"📨 Dados: {message} | Metadados: {metadata} | Dados Iniciais: {initial_data}")
         
         settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
@@ -251,13 +252,23 @@ class ZaiaService:
         logger.info(f"📱 Mensagem: '{message_text}' | Telefone: {phone}")
         
         try:
+            # Monta o campo 'custom' dinamicamente
+            custom_data = {"whatsapp": phone}
+            if metadata:
+                custom_data.update(metadata)
+
             payload = {
                 "agentId": int(agent_id),
                 "externalGenerativeChatExternalId": phone,
                 "prompt": message_text,
                 "streaming": False,
                 "asMarkdown": False,
+                "custom": custom_data
             }
+
+            # Adiciona o campo 'data' se fornecido
+            if initial_data:
+                payload["data"] = initial_data
             
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
             logger.info(f"📤 Enviando mensagem para Zaia...")
