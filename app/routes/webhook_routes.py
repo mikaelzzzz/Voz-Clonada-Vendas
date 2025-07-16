@@ -130,12 +130,16 @@ async def handle_webhook(request: Request):
                 # Processamento de texto...
                 message_text = data['text'].get('message', '')
                 zaia_service = ZaiaService()
-                # Passa o nome e o telefone do cliente nos metadados para o campo 'custom'
-                metadata = {"senderName": sender_name, "phone": phone}
-                zaia_response = await zaia_service.send_message({'text': {'body': message_text}, 'phone': phone}, metadata=metadata)
+                zaia_response = await zaia_service.send_message({'text': {'body': message_text}, 'phone': phone})
                 
                 if zaia_response.get('text'):
-                    await ZAPIService.send_text_with_typing(phone, zaia_response['text'])
+                    # Monta os dados customizados para a Z-API
+                    custom_data_for_zapi = {"name": sender_name, "senderName": sender_name}
+                    await ZAPIService.send_text_with_typing(
+                        phone,
+                        zaia_response['text'],
+                        custom_data=custom_data_for_zapi
+                    )
             
             return JSONResponse({"status": "message_processed"})
 
