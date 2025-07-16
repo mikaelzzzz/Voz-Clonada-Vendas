@@ -100,33 +100,38 @@ class NotionService:
             "Link Rápido WhatsApp": {"url": f"https://wa.me/{phone}"}
         }
 
+        # Monta o payload da capa se a URL da foto existir
+        payload_updates = {"properties": properties}
+        if photo_url:
+            payload_updates["cover"] = {
+                "type": "external",
+                "external": {"url": photo_url}
+            }
+
         if page_id:
             logger.info(f"Lead com telefone {phone} já existe (Page ID: {page_id}). Atualizando...")
             update_url = f"{self.api_url}/pages/{page_id}"
-            payload = {"properties": properties}
-            if photo_url:
-                payload["cover"] = {"type": "external", "external": {"url": photo_url}}
-
+            
             try:
-                response = requests.patch(update_url, headers=self.headers, json=payload)
+                response = requests.patch(update_url, headers=self.headers, json=payload_updates)
                 response.raise_for_status()
                 logger.info(f"Página do lead {phone} atualizada com sucesso.")
             except Exception as e:
-                error_message = f"Erro ao atualizar página no Notion para o lead {phone}: {e}"
+                error_message = f"Erro ao atualizar página no Notion para o lead {phone}: {e.response.text if hasattr(e, 'response') else str(e)}"
                 logger.error(error_message)
-                print(f"[NOTION_SERVICE_ERROR] {error_message}") # Print para depuração
+                print(f"[NOTION_SERVICE_ERROR] {error_message}")
         else:
             logger.info(f"Criando novo lead no Notion para {phone}...")
             create_url = f"{self.api_url}/pages"
-            payload = {
+            
+            # Adiciona a relação de 'parent' apenas na criação
+            full_payload = {
                 "parent": {"database_id": self.database_id},
-                "properties": properties,
+                **payload_updates
             }
-            if photo_url:
-                payload["cover"] = {"type": "external", "external": {"url": photo_url}}
 
             try:
-                response = requests.post(create_url, headers=self.headers, json=payload)
+                response = requests.post(create_url, headers=self.headers, json=full_payload)
                 response.raise_for_status()
                 logger.info(f"Novo lead {phone} criado no Notion com sucesso.")
             except Exception as e:
