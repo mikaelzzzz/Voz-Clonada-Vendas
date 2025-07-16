@@ -132,16 +132,18 @@ async def handle_webhook(request: Request):
             lead_full_data = notion_service.get_lead_data_by_phone(phone)
             lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
 
-            # Constrói um pré-prompt com o contexto do CRM
-            context_prompt = ""
-            if lead_properties:
-                context_prompt = (
-                    "Instruções para a IA: Você está falando com "
-                    f"{lead_properties.get('Cliente', 'um cliente')}, que trabalha como "
-                    f"{lead_properties.get('Profissão', 'não informado')} e tem o nível de qualificação "
-                    f"'{lead_properties.get('Nível de Qualificação', 'não definido')}'. "
-                    "Use essas informações para personalizar sua resposta. A última mensagem do cliente foi:"
-                )
+            # Constrói o prompt final para a Zaia, integrando o contexto
+            def build_final_prompt(base_message: str) -> str:
+                parts = []
+                # Adiciona o nome se já conhecido
+                if lead_properties.get('Cliente'):
+                    parts.append(f"Meu nome é {lead_properties.get('Cliente')}.")
+                # Adiciona a profissão se já conhecida
+                if lead_properties.get('Profissão'):
+                    parts.append(f"Eu trabalho como {lead_properties.get('Profissão')}.")
+                
+                parts.append(f"Minha pergunta é: {base_message}")
+                return " ".join(parts)
 
             if 'audio' in data and data.get('audio'):
                 # Processamento de áudio...
@@ -149,9 +151,10 @@ async def handle_webhook(request: Request):
                 whisper_service = WhisperService()
                 transcript = await whisper_service.transcribe_audio(audio_url)
                 
-                final_prompt = f"{context_prompt} '{transcript}'"
+                final_prompt = build_final_prompt(transcript)
 
                 zaia_service = ZaiaService()
+                # Remove o envio de dados iniciais, pois já estão no prompt
                 zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
                 
                 if zaia_response.get('text'):
@@ -162,17 +165,11 @@ async def handle_webhook(request: Request):
             elif 'text' in data and data.get('text'):
                 # Processamento de texto...
                 message_text = data['text'].get('message', '')
-                final_prompt = f"{context_prompt} '{message_text}'"
+                final_prompt = build_final_prompt(message_text)
 
                 zaia_service = ZaiaService()
-                
-                # Pré-preenche a variável @data.nome com o nome do cliente
-                initial_zaia_data = {"nome": lead_properties.get('Cliente')}
-
-                zaia_response = await zaia_service.send_message(
-                    {'text': final_prompt, 'phone': phone},
-                    initial_data=initial_zaia_data
-                )
+                 # Remove o envio de dados iniciais, pois já estão no prompt
+                zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
                 
                 if zaia_response.get('text'):
                     await ZAPIService.send_text_with_typing(phone, zaia_response['text'])

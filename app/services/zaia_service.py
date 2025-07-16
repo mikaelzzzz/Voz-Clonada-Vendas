@@ -220,14 +220,13 @@ class ZaiaService:
             raise Exception(f"Erro de rede ao criar chat: {str(e)}")
 
     @staticmethod
-    async def send_message(message: dict, metadata: dict = None, initial_data: dict = None):
+    async def send_message(message: dict, metadata: dict = None):
         """
         Envia mensagem para a Zaia.
-        - metadata: para o campo 'custom' (variáveis {{custom.}})
-        - initial_data: para o campo 'data' (variáveis {{data.}})
+        O contexto do CRM agora é injetado diretamente no prompt.
         """
         logger.info(f"=== ENVIANDO MENSAGEM PARA ZAIA ===")
-        logger.info(f"📨 Dados: {message} | Metadados: {metadata} | Dados Iniciais: {initial_data}")
+        logger.info(f"📨 Dados: {message} | Metadados: {metadata}")
         
         settings = Settings()
         base_url = settings.ZAIA_BASE_URL.rstrip("/")
@@ -240,7 +239,7 @@ class ZaiaService:
             "Accept": "application/json"
         }
         
-        # Extrai o texto do prompt (que agora pode ser complexo)
+        # Extrai o texto do prompt (que agora vem enriquecido)
         message_text = message.get('text')
         if not message_text:
             raise Exception("Texto da mensagem (prompt) não encontrado")
@@ -265,10 +264,6 @@ class ZaiaService:
                 "asMarkdown": False,
                 "custom": custom_data
             }
-
-            # Adiciona o campo 'data' se fornecido
-            if initial_data:
-                payload["data"] = initial_data
             
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
             logger.info(f"📤 Enviando mensagem para Zaia...")
