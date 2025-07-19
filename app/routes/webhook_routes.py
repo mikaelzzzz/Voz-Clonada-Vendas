@@ -278,6 +278,15 @@ async def handle_webhook(request: Request):
         logger.info(f"Processando mensagem de {sender_name} ({phone})")
 
         try:
+            # Extrai o texto da mensagem primeiro
+            message_text = ""
+            is_audio = 'audio' in data and data.get('audio')
+            if is_audio:
+                whisper_service = WhisperService()
+                message_text = await whisper_service.transcribe_audio(data['audio']['audioUrl'])
+            elif 'text' in data and data.get('text'):
+                message_text = data['text'].get('message', '')
+
             # Garante que o lead existe no Notion e verifica se é novo
             notion_service = NotionService()
             is_new_lead = notion_service.create_or_update_lead(
@@ -341,14 +350,6 @@ async def handle_webhook(request: Request):
 
             # Se não for novo, o tratamento inteligente começa aqui
             logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
-
-            message_text = ""
-            is_audio = 'audio' in data and data.get('audio')
-            if is_audio:
-                whisper_service = WhisperService()
-                message_text = await whisper_service.transcribe_audio(data['audio']['audioUrl'])
-            elif 'text' in data and data.get('text'):
-                message_text = data['text'].get('message', '')
 
             normalized_message = message_text.strip().lower()
             greetings = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'opa']
