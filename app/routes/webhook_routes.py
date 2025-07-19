@@ -16,6 +16,170 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+def is_commercial_name(name: str) -> bool:
+    """
+    Determina se um nome é provavelmente comercial ou de negócio.
+    
+    Args:
+        name (str): Nome a ser analisado
+        
+    Returns:
+        bool: True se for provavelmente comercial, False caso contrário
+    """
+    if not name or not name.strip():
+        return False
+    
+    name_lower = name.lower()
+    name_parts = name.split()
+    
+    # Palavras-chave comerciais e de negócios
+    commercial_keywords = [
+        'beauty', 'hair', 'dresser', 'salon', 'studio', 'clinic', 'consultoria',
+        'consulting', 'services', 'solutions', 'enterprise', 'company', 'ltd',
+        'inc', 'corp', 'associates', 'group', 'team', 'center', 'institute',
+        'academy', 'school', 'training', 'coaching', 'mentoring', 'design',
+        'designer', 'photography', 'photographer', 'makeup', 'makeup artist',
+        'nails', 'nail artist', 'spa', 'wellness', 'fitness', 'personal trainer',
+        'coach', 'instructor', 'teacher', 'professor', 'law', 'lawyer', 'attorney',
+        'arch', 'architect', 'accountant', 'dentistry', 'dental', 'veterinary', 
+        'vet', 'pharmacy', 'pharmacist', 'office', 'consulting', 'solutions',
+        'technology', 'tech', 'digital', 'online', 'web', 'mobile', 'app',
+        'software', 'system', 'network', 'security', 'marketing', 'advertising',
+        'media', 'production', 'studio', 'agency', 'partners', 'associates'
+    ]
+    
+    # Iniciais comuns em inglês que indicam empresa/negócio
+    business_initials = [
+        'ai', 'aii', 'aiii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
+        'co', 'corp', 'inc', 'ltd', 'llc', 'plc', 'pty', 'pty ltd',
+        'pvt', 'pvt ltd', 'gmbh', 'ag', 'sarl', 'sas', 'spa', 'srl'
+    ]
+    
+    # Critério 1: Contém palavra-chave comercial
+    if any(word in name_lower for word in commercial_keywords):
+        logger.info(f"Nome '{name}' identificado como comercial por palavra-chave")
+        return True
+    
+    # Critério 2: Contém iniciais de negócio
+    if any(initial in name_lower for initial in business_initials):
+        logger.info(f"Nome '{name}' identificado como comercial por iniciais")
+        return True
+    
+    # Critério 3: Mais de 3 palavras (provavelmente nome de empresa)
+    if len(name_parts) > 3:
+        logger.info(f"Nome '{name}' identificado como comercial por ter muitas palavras ({len(name_parts)})")
+        return True
+    
+    # Critério 4: Contém caracteres típicos de empresa
+    business_chars = ['&', '/', '|', '-', '@', '+', '(', ')', '[', ']']
+    if any(char in name for char in business_chars):
+        logger.info(f"Nome '{name}' identificado como comercial por caracteres especiais")
+        return True
+    
+    # Critério 5: Padrão de iniciais (ex: AI Mika, AB Company)
+    # Verifica se as primeiras palavras são apenas letras maiúsculas (iniciais)
+    if len(name_parts) >= 2:
+        first_part = name_parts[0].strip()
+        if (len(first_part) <= 3 and 
+            first_part.isupper() and 
+            first_part.isalpha()):
+            logger.info(f"Nome '{name}' identificado como comercial por padrão de iniciais")
+            return True
+    
+    # Critério 6: Contém números (típico de empresas)
+    if any(char.isdigit() for char in name):
+        logger.info(f"Nome '{name}' identificado como comercial por conter números")
+        return True
+    
+    return False
+
+def extract_first_name(full_name: str) -> str:
+    """
+    Extrai o primeiro nome de forma natural, removendo sufixos comerciais e tratando casos especiais.
+    
+    Args:
+        full_name (str): Nome completo do cliente
+        
+    Returns:
+        str: Primeiro nome limpo para uso em conversas
+    """
+    if not full_name or not full_name.strip():
+        return "cliente"
+    
+    # Remove espaços extras e normaliza
+    name = full_name.strip()
+    
+    # Lista de títulos profissionais para pular
+    professional_titles = [
+        'dr', 'doctor', 'dra', 'doutor', 'doutora', 'eng', 'engineer', 'engenheiro',
+        'adv', 'advocacia', 'advogado', 'advogada', 'prof', 'professor', 'professora',
+        'cont', 'contador', 'contadora', 'med', 'medicine', 'médico', 'médica'
+    ]
+    
+    # Lista de sufixos comerciais comuns para remover
+    commercial_suffixes = [
+        'beauty', 'hair', 'dresser', 'salon', 'studio', 'clinic', 'consultoria',
+        'consulting', 'services', 'solutions', 'enterprise', 'company', 'ltd',
+        'inc', 'corp', 'associates', 'group', 'team', 'center', 'institute',
+        'academy', 'school', 'training', 'coaching', 'mentoring', 'consulting',
+        'design', 'designer', 'photography', 'photographer', 'makeup', 'makeup artist',
+        'nails', 'nail artist', 'spa', 'wellness', 'fitness', 'personal trainer',
+        'coach', 'instructor', 'teacher', 'professor', 'law', 'lawyer', 'attorney',
+        'arch', 'architect', 'accountant', 'dentistry', 'dental', 'veterinary', 
+        'vet', 'pharmacy', 'pharmacist'
+    ]
+    
+    # Remove caracteres especiais e divide o nome em partes
+    name_clean = re.sub(r'[^\w\s]', ' ', name)  # Remove caracteres especiais
+    # Remove underscores também
+    name_clean = name_clean.replace('_', ' ')
+    name_parts = name_clean.split()
+    
+    # Se não há partes válidas após limpeza, retorna cliente
+    if not name_parts:
+        return "cliente"
+    
+    # Se tem apenas uma palavra, retorna ela
+    if len(name_parts) == 1:
+        return name_parts[0].title()
+    
+    # Procura pelo primeiro nome válido (pula títulos profissionais e sufixos comerciais)
+    first_name = None
+    for part in name_parts:
+        part_lower = part.lower()
+        # Se a parte não é um título profissional, não é um sufixo comercial e tem pelo menos 2 caracteres
+        if (part_lower not in professional_titles and 
+            part_lower not in commercial_suffixes and 
+            len(part) >= 2):
+            first_name = part.title()
+            break
+    
+    # Se não encontrou um nome válido, usa a primeira parte que não seja um título
+    if not first_name:
+        for part in name_parts:
+            part_lower = part.lower()
+            if part_lower not in professional_titles:
+                first_name = part.title()
+                break
+    
+    # Se ainda não encontrou, usa a primeira parte
+    if not first_name:
+        first_name = name_parts[0].title()
+    
+    # Tratamento especial para nomes muito longos
+    if len(first_name) > 20:
+        first_name = first_name[:20]
+    
+    # Remove espaços extras que podem ter sobrado
+    first_name = first_name.strip()
+    
+    # Se ficou vazio após limpeza, usa um nome genérico
+    if not first_name:
+        first_name = "cliente"
+    
+    logger.info(f"Nome original: '{full_name}' -> Primeiro nome extraído: '{first_name}'")
+    return first_name
+
 @router.post("")
 async def handle_webhook(request: Request):
     data = await request.json()
@@ -124,8 +288,10 @@ async def handle_webhook(request: Request):
 
             # Se for um novo lead, nossa aplicação envia a primeira saudação
             if is_new_lead:
-                logger.info(f"Novo lead detectado ({phone}). Enviando saudação personalizada diretamente.")
-                greeting_message = f"Olá, {sender_name}! Que bom ter você por aqui. Como posso ajudar hoje?"
+                logger.info(f"Novo lead detectado ({phone}). Enviando saudação personalizada.")
+                # Sempre extrai o primeiro nome para deixar mais natural
+                first_name = extract_first_name(sender_name)
+                greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
                 await ZAPIService.send_text_with_typing(phone, greeting_message)
                 return JSONResponse({"status": "new_lead_greeted"})
 
@@ -146,7 +312,8 @@ async def handle_webhook(request: Request):
             # Se for um simples cumprimento, nosso código responde diretamente
             if normalized_message in greetings:
                 logger.info("Mensagem é um cumprimento. Respondendo diretamente.")
-                response_message = f"Hello Hello, {sender_name}! Como posso te ajudar hoje?"
+                first_name = extract_first_name(sender_name)
+                response_message = f"Hello Hello, {first_name}! Como posso te ajudar hoje?"
                 # Se a mensagem original era áudio, respondemos com áudio
                 if is_audio:
                     elevenlabs_service = ElevenLabsService()
@@ -164,7 +331,9 @@ async def handle_webhook(request: Request):
             # Constrói o prompt final para a Zaia
             def build_final_prompt(base_message: str) -> str:
                 client_name = lead_properties.get('Cliente', 'cliente')
-                parts = [f"Meu nome é {client_name}."]
+                # Extrai o primeiro nome para usar no prompt da Zaia também
+                first_name = extract_first_name(client_name)
+                parts = [f"Meu nome é {first_name}."]
                 if lead_properties.get('Profissão') and lead_properties.get('Profissão') != 'não informado':
                     parts.append(f"Eu trabalho como {lead_properties.get('Profissão')}.")
                 
