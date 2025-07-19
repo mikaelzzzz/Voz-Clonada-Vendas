@@ -286,14 +286,58 @@ async def handle_webhook(request: Request):
                 photo_url=data.get('photo')
             )
 
-            # Se for um novo lead, nossa aplicação envia a primeira saudação
+            # Se for um novo lead, verifica se já fez uma pergunta direta
             if is_new_lead:
-                logger.info(f"Novo lead detectado ({phone}). Enviando saudação personalizada.")
-                # Sempre extrai o primeiro nome para deixar mais natural
+                logger.info(f"Novo lead detectado ({phone}). Verificando se já fez uma pergunta direta.")
+                
+                # Extrai o primeiro nome
                 first_name = extract_first_name(sender_name)
-                greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
-                await ZAPIService.send_text_with_typing(phone, greeting_message)
-                return JSONResponse({"status": "new_lead_greeted"})
+                
+                # Verifica se a mensagem é uma pergunta direta (não é apenas um cumprimento)
+                normalized_message = message_text.strip().lower()
+                greetings = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+                
+                if normalized_message in greetings:
+                    # Se for apenas um cumprimento, envia a saudação padrão
+                    logger.info("Novo lead enviou apenas cumprimento. Enviando saudação personalizada.")
+                    greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
+                    await ZAPIService.send_text_with_typing(phone, greeting_message)
+                    return JSONResponse({"status": "new_lead_greeted"})
+                else:
+                    # Se já fez uma pergunta direta, responde diretamente com contexto
+                    logger.info("Novo lead já fez pergunta direta. Respondendo com contexto.")
+                    
+                    # Constrói o prompt para a Zaia com o contexto do novo lead
+                    def build_new_lead_prompt(base_message: str) -> str:
+                        parts = [f"Meu nome é {first_name}."]
+                        parts.append(f"Minha pergunta é: {base_message}")
+                        return " ".join(parts)
+                    
+                    final_prompt = build_new_lead_prompt(message_text)
+                    
+                    zaia_service = ZaiaService()
+                    zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
+                    
+                    if zaia_response.get('text'):
+                        ai_response_text = zaia_response.get('text')
+                        
+                        # Regex para detectar URLs na resposta da IA
+                        url_pattern = r'https?://[^\s]+'
+                        contains_link = re.search(url_pattern, ai_response_text)
+
+                        # Se a mensagem original era áudio E a resposta NÃO contém link, envia áudio
+                        if is_audio and not contains_link:
+                            logger.info("Resposta para áudio sem link. Gerando áudio.")
+                            elevenlabs_service = ElevenLabsService()
+                            audio_bytes = elevenlabs_service.generate_audio(ai_response_text)
+                            await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=ai_response_text)
+                        # Em todos os outros casos (resposta de texto, ou resposta com link), envia texto
+                        else:
+                            if contains_link:
+                                logger.info("Resposta contém um link. Enviando como texto por padrão.")
+                            await ZAPIService.send_text_with_typing(phone, ai_response_text)
+                    
+                    return JSONResponse({"status": "new_lead_direct_question_processed"})
 
             # Se não for novo, o tratamento inteligente começa aqui
             logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
