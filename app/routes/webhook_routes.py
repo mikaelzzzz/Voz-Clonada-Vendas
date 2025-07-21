@@ -304,7 +304,7 @@ async def handle_webhook(request: Request):
                 
                 # Verifica se a mensagem é uma pergunta direta (não é apenas um cumprimento)
                 normalized_message = message_text.strip().lower()
-                greetings = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+                greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
                 
                 if normalized_message in greetings:
                     # Se for apenas um cumprimento, envia a saudação padrão
@@ -352,7 +352,7 @@ async def handle_webhook(request: Request):
             logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
 
             normalized_message = message_text.strip().lower()
-            greetings = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+            greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
 
             # Se for um simples cumprimento, nosso código responde diretamente
             if normalized_message in greetings:
