@@ -364,9 +364,8 @@ async def handle_webhook(request: Request):
                         
                         # Constrói o prompt para a Zaia com o contexto do novo lead
                         def build_new_lead_prompt(base_message: str, detected_lang: str) -> str:
-                            lang_instruction = "Responda em inglês." if detected_lang == 'en' else "Responda em português."
-                            parts = [f"Instrução: {lang_instruction}", f"Meu nome é {first_name}."]
-                            parts.append(f"Minha pergunta é: {base_message}")
+                            lang_instruction = "Instrução: Responda em inglês." if detected_lang == 'en' else "Instrução: Responda em português."
+                            parts = [lang_instruction, f"Meu nome é {first_name}.", f"Minha pergunta é: {base_message}"]
                             return " ".join(parts)
                         
                         final_prompt = build_new_lead_prompt(message_text, lang)
