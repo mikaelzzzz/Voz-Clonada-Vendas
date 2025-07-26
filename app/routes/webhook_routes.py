@@ -180,242 +180,245 @@ def extract_first_name(full_name: str) -> str:
     logger.info(f"Nome original: '{full_name}' -> Primeiro nome extraído: '{first_name}'")
     return first_name
 
+async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict):
+    """
+    Função auxiliar para processar a resposta da Zaia, verificando links
+    e enviando a resposta no formato correto (áudio ou texto).
+    """
+    if not zaia_response or not zaia_response.get('text'):
+        logger.warning("Resposta da Zaia vazia ou inválida.")
+        return
+
+    ai_response_text = zaia_response.get('text')
+    
+    # Regex para detectar URLs
+    url_pattern = r'https?://[^\s]+'
+    contains_link = re.search(url_pattern, ai_response_text)
+
+    # Se a mensagem original era áudio E a resposta NÃO contém link, envia áudio
+    if is_audio and not contains_link:
+        logger.info("Resposta para áudio sem link. Gerando áudio.")
+        elevenlabs_service = ElevenLabsService()
+        audio_bytes = elevenlabs_service.generate_audio(ai_response_text)
+        await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=ai_response_text)
+    # Em todos os outros casos (resposta de texto ou com link), envia texto
+    else:
+        if contains_link:
+            logger.info("Resposta contém um link. Enviando como texto por padrão.")
+        await ZAPIService.send_text_with_typing(phone, ai_response_text)
+
 @router.post("")
 async def handle_webhook(request: Request):
     data = await request.json()
     logger.info(f"Webhook recebido: {data}")
 
-    # Rota 1: Webhook de Qualificação de Lead da Zaia
-    if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
-        phone_raw = data.get('whatsapp')
+    try:
+        # Rota 1: Webhook de Qualificação de Lead da Zaia
+        if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
+            phone_raw = data.get('whatsapp')
 
-        # Validação para garantir que a variável da Zaia foi substituída
-        if not phone_raw or '{{' in str(phone_raw):
-            error_msg = f"Webhook de qualificação recebido com telefone inválido: {phone_raw}"
-            logger.error(error_msg)
-            return JSONResponse({"status": "invalid_phone_variable", "detail": error_msg}, status_code=400)
+            if not phone_raw or '{{' in str(phone_raw):
+                error_msg = f"Webhook de qualificação recebido com telefone inválido: {phone_raw}"
+                logger.error(error_msg)
+                return JSONResponse({"status": "invalid_phone_variable", "detail": error_msg}, status_code=400)
 
-        phone = re.sub(r'\D', '', str(phone_raw)) # Normaliza o número, mantendo apenas dígitos
-        profissao = data.get('profissao')
-        motivo = data.get('motivo')
-        logger.info(f"Processando qualificação de lead para {phone} (original: {phone_raw})")
+            phone = re.sub(r'\D', '', str(phone_raw))
+            profissao = data.get('profissao')
+            motivo = data.get('motivo')
+            logger.info(f"Processando qualificação de lead para {phone} (original: {phone_raw})")
 
-        try:
-            notion_service = NotionService()
-            openai_service = OpenAIService()
-            qualification_service = QualificationService()
-            settings = Settings()
+            try:
+                notion_service = NotionService()
+                openai_service = OpenAIService()
+                qualification_service = QualificationService()
+                settings = Settings()
+                        
+                # 1. Classifica o lead
+                qualification_level = await qualification_service.classify_lead(motivo, profissao)
+                logger.info(f"Lead {phone} classificado como: {qualification_level}")
+                        
+                # 2. Atualiza o Notion com todas as informações
+                updates = {
+                    "Profissão": profissao,
+                    "Real Motivação": motivo,
+                    "Status": "Qualificado pela IA",
+                    "Nível de Qualificação": qualification_level
+                }
+                notion_service.update_lead_properties(phone, updates)
+                        
+                # Busca os dados completos do lead para tomar a decisão
+                lead_full_data = notion_service.get_lead_data_by_phone(phone)
+                lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
+                alerta_enviado = lead_properties.get('Alerta Enviado', False)
 
-            # 1. Classifica o lead
-            qualification_level = await qualification_service.classify_lead(motivo, profissao)
-            logger.info(f"Lead {phone} classificado como: {qualification_level}")
+                # 3. Se for de alta prioridade E o alerta ainda não foi enviado, gera e envia a análise
+                if qualification_level == 'Alto' and not alerta_enviado:
+                    logger.info(f"Lead {phone} é de alta prioridade e o alerta ainda não foi enviado. Notificando a equipe.")
+                    
+                    # Gera o resumo de texto com a IA
+                    summary_text = await openai_service.generate_sales_summary(lead_properties)
+                    
+                    notion_url = lead_full_data.get('url', 'URL do Notion não encontrada.')
+                    final_message = (
+                        f"{summary_text}\n\n"
+                        f"🔗 *Link do Notion:* {notion_url}\n"
+                        f"📱 *WhatsApp do Lead:* https://wa.me/{phone}"
+                    )
 
-            # 2. Atualiza o Notion com todas as informações
-            updates = {
-                "Profissão": profissao,
-                "Real Motivação": motivo,
-                "Status": "Qualificado pela IA",
-                "Nível de Qualificação": qualification_level
-            }
-            notion_service.update_lead_properties(phone, updates)
+                    for sales_phone in settings.SALES_TEAM_PHONES:
+                        await ZAPIService.send_text(sales_phone, final_message)
+                        
+                    # Marca que o alerta foi enviado para não repetir
+                    notion_service.update_lead_properties(phone, {"Alerta Enviado": True})
+                    logger.info(f"Alerta de vendas para o lead {phone} enviado e marcado como concluído.")
+
+                elif alerta_enviado:
+                    logger.info(f"Alerta para o lead {phone} já foi enviado anteriormente. Ignorando.")
+                else: # Lead de baixa prioridade
+                    logger.info(f"Lead {phone} é de baixa prioridade. Nenhuma notificação de vendas será enviada.")
+
+                return JSONResponse({"status": "lead_qualified_processed"})
+                    
+            except Exception as e:
+                error_message = f"Erro ao processar qualificação de lead para {phone}: {e}"
+                logger.error(error_message)
+                print(f"[WEBHOOK_ERROR] {error_message}")
+                return JSONResponse({"status": "error", "detail": error_message}, status_code=500)
+
+        # Rota 2: Webhook de Mensagem do Cliente da Z-API
+        elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
             
-            # Busca os dados completos do lead para tomar a decisão
-            lead_full_data = notion_service.get_lead_data_by_phone(phone)
-            lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
-            alerta_enviado = lead_properties.get('Alerta Enviado', False)
+            # VERIFICAÇÃO: Ignora mensagens de grupo
+            if data.get('isGroup'):
+                logger.info("Mensagem de grupo recebida. Ignorando.")
+                return JSONResponse({"status": "group_message_ignored"})
 
-            # 3. Se for de alta prioridade E o alerta ainda não foi enviado, gera e envia a análise
-            if qualification_level == 'Alto' and not alerta_enviado:
-                logger.info(f"Lead {phone} é de alta prioridade e o alerta ainda não foi enviado. Notificando a equipe.")
-                
-                # Gera o resumo de texto com a IA
-                summary_text = await openai_service.generate_sales_summary(lead_properties)
-                
-                notion_url = lead_full_data.get('url', 'URL do Notion não encontrada.')
-                final_message = (
-                    f"{summary_text}\n\n"
-                    f"🔗 *Link do Notion:* {notion_url}\n"
-                    f"📱 *WhatsApp do Lead:* https://wa.me/{phone}"
+            phone_raw = data.get('phone')
+            sender_name = data.get('senderName')
+            phone = re.sub(r'\D', '', str(phone_raw)) # Normaliza o número
+
+            # Validação básica do número normalizado
+            if not phone or not sender_name:
+                logger.warning(f"Telefone ou nome do remetente inválidos após normalização. Original: {phone_raw}")
+                return JSONResponse({"status": "invalid_sender_data"})
+
+            logger.info(f"Processando mensagem de {sender_name} ({phone})")
+
+            try:
+                # Extrai o texto da mensagem primeiro
+                message_text = ""
+                is_audio = 'audio' in data and data.get('audio')
+                if is_audio:
+                    whisper_service = WhisperService()
+                    message_text = await whisper_service.transcribe_audio(data['audio']['audioUrl'])
+                elif 'text' in data and data.get('text'):
+                    message_text = data['text'].get('message', '')
+
+                # Garante que o lead existe no Notion e verifica se é novo
+                notion_service = NotionService()
+                is_new_lead = notion_service.create_or_update_lead(
+                    sender_name=sender_name,
+                    phone=phone,
+                    photo_url=data.get('photo')
                 )
 
-                for sales_phone in settings.SALES_TEAM_PHONES:
-                    await ZAPIService.send_text(sales_phone, final_message)
-                
-                # Marca que o alerta foi enviado para não repetir
-                notion_service.update_lead_properties(phone, {"Alerta Enviado": True})
-                logger.info(f"Alerta de vendas para o lead {phone} enviado e marcado como concluído.")
+                # Se for um novo lead, verifica se já fez uma pergunta direta
+                if is_new_lead:
+                    logger.info(f"Novo lead detectado ({phone}). Verificando se já fez uma pergunta direta.")
+                        
+                    # Extrai o primeiro nome
+                    first_name = extract_first_name(sender_name)
+                        
+                    # Verifica se a mensagem é uma pergunta direta (não é apenas um cumprimento)
+                    normalized_message = message_text.strip().lower()
+                    greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+                        
+                    if normalized_message in greetings:
+                        # Se for apenas um cumprimento, envia a saudação padrão
+                        logger.info("Novo lead enviou apenas cumprimento. Enviando saudação personalizada.")
+                        greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
+                        await ZAPIService.send_text_with_typing(phone, greeting_message)
+                        return JSONResponse({"status": "new_lead_greeted"})
+                    else:
+                        # Se já fez uma pergunta direta, responde diretamente com contexto
+                        logger.info("Novo lead já fez pergunta direta. Respondendo com contexto.")
+                        
+                        # Constrói o prompt para a Zaia com o contexto do novo lead
+                        def build_new_lead_prompt(base_message: str) -> str:
+                            parts = [f"Meu nome é {first_name}."]
+                            parts.append(f"Minha pergunta é: {base_message}")
+                            return " ".join(parts)
+                        
+                        final_prompt = build_new_lead_prompt(message_text)
+                        
+                        zaia_service = ZaiaService()
+                        zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
+                        
+                        await _handle_zaia_response(phone, is_audio, zaia_response)
+                        return JSONResponse({"status": "new_lead_direct_question_processed"})
 
-            elif alerta_enviado:
-                logger.info(f"Alerta para o lead {phone} já foi enviado anteriormente. Ignorando.")
-            else: # Lead de baixa prioridade
-                logger.info(f"Lead {phone} é de baixa prioridade. Nenhuma notificação de vendas será enviada.")
+                # Se não for novo, o tratamento inteligente começa aqui
+                logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
 
-            return JSONResponse({"status": "lead_qualified_processed"})
-
-        except Exception as e:
-            error_message = f"Erro ao processar qualificação de lead para {phone}: {e}"
-            logger.error(error_message)
-            print(f"[WEBHOOK_ERROR] {error_message}")
-            return JSONResponse({"status": "error", "detail": error_message}, status_code=500)
-
-    # Rota 2: Webhook de Mensagem do Cliente da Z-API
-    elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
-        
-        # VERIFICAÇÃO: Ignora mensagens de grupo
-        if data.get('isGroup'):
-            logger.info("Mensagem de grupo recebida. Ignorando.")
-            return JSONResponse({"status": "group_message_ignored"})
-
-        phone_raw = data.get('phone')
-        sender_name = data.get('senderName')
-        phone = re.sub(r'\D', '', str(phone_raw)) # Normaliza o número
-
-        # Validação básica do número normalizado
-        if not phone or not sender_name:
-            logger.warning(f"Telefone ou nome do remetente inválidos após normalização. Original: {phone_raw}")
-            return JSONResponse({"status": "invalid_sender_data"})
-
-        logger.info(f"Processando mensagem de {sender_name} ({phone})")
-
-        try:
-            # Extrai o texto da mensagem primeiro
-            message_text = ""
-            is_audio = 'audio' in data and data.get('audio')
-            if is_audio:
-                whisper_service = WhisperService()
-                message_text = await whisper_service.transcribe_audio(data['audio']['audioUrl'])
-            elif 'text' in data and data.get('text'):
-                message_text = data['text'].get('message', '')
-
-            # Garante que o lead existe no Notion e verifica se é novo
-            notion_service = NotionService()
-            is_new_lead = notion_service.create_or_update_lead(
-                sender_name=sender_name,
-                phone=phone,
-                photo_url=data.get('photo')
-            )
-
-            # Se for um novo lead, verifica se já fez uma pergunta direta
-            if is_new_lead:
-                logger.info(f"Novo lead detectado ({phone}). Verificando se já fez uma pergunta direta.")
-                
-                # Extrai o primeiro nome
-                first_name = extract_first_name(sender_name)
-                
-                # Verifica se a mensagem é uma pergunta direta (não é apenas um cumprimento)
                 normalized_message = message_text.strip().lower()
                 greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
-                
+
+                # Se for um simples cumprimento, nosso código responde diretamente
                 if normalized_message in greetings:
-                    # Se for apenas um cumprimento, envia a saudação padrão
-                    logger.info("Novo lead enviou apenas cumprimento. Enviando saudação personalizada.")
-                    greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
-                    await ZAPIService.send_text_with_typing(phone, greeting_message)
-                    return JSONResponse({"status": "new_lead_greeted"})
-                else:
-                    # Se já fez uma pergunta direta, responde diretamente com contexto
-                    logger.info("Novo lead já fez pergunta direta. Respondendo com contexto.")
+                    logger.info("Mensagem é um cumprimento. Respondendo diretamente.")
+                    first_name = extract_first_name(sender_name)
+                    response_message = f"Hello Hello, {first_name}! Como posso te ajudar hoje?"
+                    # Se a mensagem original era áudio, respondemos com áudio
+                    if is_audio:
+                        elevenlabs_service = ElevenLabsService()
+                        audio_bytes = elevenlabs_service.generate_audio(response_message)
+                        await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=response_message)
+                    else:
+                        await ZAPIService.send_text_with_typing(phone, response_message)
+                    return JSONResponse({"status": "existing_lead_greeted"})
+
+                # Se for uma pergunta real, enriquecemos o contexto e enviamos para a Zaia
+                logger.info("Mensagem é uma pergunta. Enviando para a Zaia com contexto.")
+                lead_full_data = notion_service.get_lead_data_by_phone(phone)
+                lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
+
+                # Constrói o prompt final para a Zaia
+                def build_final_prompt(base_message: str) -> str:
+                    client_name = lead_properties.get('Cliente', 'cliente')
+                    # Extrai o primeiro nome para usar no prompt da Zaia também
+                    first_name = extract_first_name(client_name)
+                    parts = [f"Meu nome é {first_name}."]
+                    if lead_properties.get('Profissão') and lead_properties.get('Profissão') != 'não informado':
+                        parts.append(f"Eu trabalho como {lead_properties.get('Profissão')}.")
                     
-                    # Constrói o prompt para a Zaia com o contexto do novo lead
-                    def build_new_lead_prompt(base_message: str) -> str:
-                        parts = [f"Meu nome é {first_name}."]
-                        parts.append(f"Minha pergunta é: {base_message}")
-                        return " ".join(parts)
-                    
-                    final_prompt = build_new_lead_prompt(message_text)
-                    
-                    zaia_service = ZaiaService()
-                    zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
-                    
-                    if zaia_response.get('text'):
-                        ai_response_text = zaia_response.get('text')
-                        
-                        # Regex para detectar URLs na resposta da IA
-                        url_pattern = r'https?://[^\s]+'
-                        contains_link = re.search(url_pattern, ai_response_text)
-
-                        # Se a mensagem original era áudio E a resposta NÃO contém link, envia áudio
-                        if is_audio and not contains_link:
-                            logger.info("Resposta para áudio sem link. Gerando áudio.")
-                            elevenlabs_service = ElevenLabsService()
-                            audio_bytes = elevenlabs_service.generate_audio(ai_response_text)
-                            await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=ai_response_text)
-                        # Em todos os outros casos (resposta de texto, ou resposta com link), envia texto
-                        else:
-                            if contains_link:
-                                logger.info("Resposta contém um link. Enviando como texto por padrão.")
-                            await ZAPIService.send_text_with_typing(phone, ai_response_text)
-                    
-                    return JSONResponse({"status": "new_lead_direct_question_processed"})
-
-            # Se não for novo, o tratamento inteligente começa aqui
-            logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
-
-            normalized_message = message_text.strip().lower()
-            greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
-
-            # Se for um simples cumprimento, nosso código responde diretamente
-            if normalized_message in greetings:
-                logger.info("Mensagem é um cumprimento. Respondendo diretamente.")
-                first_name = extract_first_name(sender_name)
-                response_message = f"Hello Hello, {first_name}! Como posso te ajudar hoje?"
-                # Se a mensagem original era áudio, respondemos com áudio
-                if is_audio:
-                    elevenlabs_service = ElevenLabsService()
-                    audio_bytes = elevenlabs_service.generate_audio(response_message)
-                    await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=response_message)
-                else:
-                    await ZAPIService.send_text_with_typing(phone, response_message)
-                return JSONResponse({"status": "existing_lead_greeted"})
-
-            # Se for uma pergunta real, enriquecemos o contexto e enviamos para a Zaia
-            logger.info("Mensagem é uma pergunta. Enviando para a Zaia com contexto.")
-            lead_full_data = notion_service.get_lead_data_by_phone(phone)
-            lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
-
-            # Constrói o prompt final para a Zaia
-            def build_final_prompt(base_message: str) -> str:
-                client_name = lead_properties.get('Cliente', 'cliente')
-                # Extrai o primeiro nome para usar no prompt da Zaia também
-                first_name = extract_first_name(client_name)
-                parts = [f"Meu nome é {first_name}."]
-                if lead_properties.get('Profissão') and lead_properties.get('Profissão') != 'não informado':
-                    parts.append(f"Eu trabalho como {lead_properties.get('Profissão')}.")
+                    parts.append(f"Minha pergunta é: {base_message}")
+                    return " ".join(parts)
                 
-                parts.append(f"Minha pergunta é: {base_message}")
-                return " ".join(parts)
-            
-            final_prompt = build_final_prompt(message_text)
+                final_prompt = build_final_prompt(message_text)
 
-            zaia_service = ZaiaService()
-            zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
-            
-            if zaia_response.get('text'):
-                ai_response_text = zaia_response.get('text')
+                zaia_service = ZaiaService()
+                zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
                 
-                # Regex para detectar URLs na resposta da IA
-                url_pattern = r'https?://[^\s]+'
-                contains_link = re.search(url_pattern, ai_response_text)
+                await _handle_zaia_response(phone, is_audio, zaia_response)
+                return JSONResponse({"status": "message_processed_by_zaia"})
 
-                # Se a mensagem original era áudio E a resposta NÃO contém link, envia áudio
-                if is_audio and not contains_link:
-                    logger.info("Resposta para áudio sem link. Gerando áudio.")
-                    elevenlabs_service = ElevenLabsService()
-                    audio_bytes = elevenlabs_service.generate_audio(ai_response_text)
-                    await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=ai_response_text)
-                # Em todos os outros casos (resposta de texto, ou resposta com link), envia texto
-                else:
-                    if contains_link:
-                        logger.info("Resposta contém um link. Enviando como texto por padrão.")
-                    await ZAPIService.send_text_with_typing(phone, ai_response_text)
-            
-            return JSONResponse({"status": "message_processed_by_zaia"})
+            except Exception as e:
+                # Tratamento de erro geral (movido para abranger tudo)
+                error_message = f"Erro geral no webhook: {e}"
+                logger.error(error_message, exc_info=True)
+                # Tenta extrair o telefone para o log, se disponível
+                phone_for_log = data.get('phone', data.get('whatsapp', 'não identificado'))
+                print(f"[WEBHOOK_ERROR] Erro ao processar mensagem de {phone_for_log}: {error_message}")
+                return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
-        except Exception as e:
-            error_message = f"Erro ao processar mensagem de {phone}: {e}"
-            logger.error(error_message)
-            print(f"[WEBHOOK_ERROR] {error_message}")
-            return JSONResponse({"status": "error", "detail": error_message}, status_code=500)
+        # Se nenhum dos webhooks corresponder
+        else:
+            logger.info("Tipo de webhook não processado.")
+            return JSONResponse({"status": "event_not_handled"})
 
-    logger.info("Tipo de webhook não processado.")
-    return JSONResponse({"status": "event_not_handled"}) 
+    except Exception as e:
+        error_message = f"Erro fatal no processamento do webhook: {e}"
+        logger.error(error_message, exc_info=True)
+        phone_for_log = data.get('phone') or data.get('whatsapp') or 'não identificado'
+        print(f"[WEBHOOK_ERROR] Erro ao processar mensagem de {phone_for_log}: {error_message}")
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500) 
