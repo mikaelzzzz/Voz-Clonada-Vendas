@@ -2,6 +2,7 @@ import logging
 import re
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from langdetect import detect, LangDetectException
 from app.services.z_api_service import ZAPIService
 from app.services.zaia_service import ZaiaService
 from app.services.elevenlabs_service import ElevenLabsService
@@ -180,6 +181,28 @@ def extract_first_name(full_name: str) -> str:
     logger.info(f"Nome original: '{full_name}' -> Primeiro nome extraído: '{first_name}'")
     return first_name
 
+def detect_language(text: str) -> str:
+    """
+    Detecta o idioma de um texto (inglês ou português) usando langdetect.
+    Retorna 'en' para inglês, 'pt' para português (padrão).
+    """
+    if not text or not text.strip():
+        return 'pt' # Padrão para português se o texto for vazio
+
+    try:
+        # A detecção pode lançar uma exceção para textos muito curtos ou ambíguos
+        lang = detect(text)
+        logger.info(f"Idioma detectado para o texto '{text[:30]}...': {lang}")
+        if lang == 'en':
+            return 'en'
+    except LangDetectException:
+        logger.warning(f"Não foi possível detectar o idioma para o texto: '{text}'. Assumindo português.")
+        # Para textos muito curtos como "ok", "sim", a detecção pode falhar.
+        # Assumir português é uma escolha segura.
+        pass
+    
+    return 'pt'
+
 async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict):
     """
     Função auxiliar para processar a resposta da Zaia, verificando links
@@ -206,17 +229,6 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
         if contains_link:
             logger.info("Resposta contém um link. Enviando como texto por padrão.")
         await ZAPIService.send_text_with_typing(phone, ai_response_text)
-
-def detect_greeting_language(message: str) -> str:
-    """
-    Detecta o idioma de uma saudação (inglês ou português).
-    """
-    english_greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
-    
-    # Se qualquer saudação em inglês estiver na mensagem, assume inglês.
-    if any(greeting in message.lower() for greeting in english_greetings):
-        return 'en'
-    return 'pt'
 
 @router.post("")
 async def handle_webhook(request: Request):
@@ -344,18 +356,19 @@ async def handle_webhook(request: Request):
                     normalized_message = message_text.strip().lower()
                     greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
                     english_greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
-                        
-                    # Detecta o idioma da saudação
-                    lang = detect_greeting_language(normalized_message)
                     
-                    if lang == 'en':
-                        greeting_message = f"Hello Hello, {first_name}! It's great to have you here. How can I help you with your English goal today?"
-                    else: # 'pt'
-                        greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
+                    is_greeting = normalized_message in greetings or normalized_message in english_greetings
+                    lang = detect_language(message_text)
 
-                    # Se for apenas um cumprimento, envia a saudação padrão no idioma detectado
-                    if normalized_message in greetings or normalized_message in english_greetings:
+                    if is_greeting:
+                        # Se for apenas um cumprimento, envia a saudação padrão no idioma detectado
                         logger.info(f"Novo lead enviou cumprimento em '{lang}'. Enviando saudação personalizada.")
+                        
+                        if lang == 'en':
+                            greeting_message = f"Hello Hello, {first_name}! It's great to have you here. How can I help you with your English goal today?"
+                        else: # 'pt'
+                            greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
+                        
                         await ZAPIService.send_text_with_typing(phone, greeting_message)
                         return JSONResponse({"status": "new_lead_greeted"})
                     else:
@@ -386,8 +399,10 @@ async def handle_webhook(request: Request):
                     english_greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
 
                     # Se for um simples cumprimento, nosso código responde diretamente
-                    lang = detect_greeting_language(normalized_message)
-                    if normalized_message in greetings or normalized_message in english_greetings:
+                    is_greeting = normalized_message in greetings or normalized_message in english_greetings
+                    lang = detect_language(message_text)
+
+                    if is_greeting:
                         logger.info(f"Mensagem é um cumprimento em '{lang}'. Respondendo diretamente.")
                         first_name = extract_first_name(sender_name)
                         
@@ -416,7 +431,7 @@ async def handle_webhook(request: Request):
                         first_name = extract_first_name(client_name)
                         
                         # Detecta o idioma da pergunta para instruir a Zaia
-                        lang = detect_greeting_language(base_message)
+                        lang = detect_language(base_message)
                         lang_instruction = "Instrução: Responda em inglês." if lang == 'en' else "Instrução: Responda em português."
 
                         parts = [lang_instruction, f"Meu nome é {first_name}."]
