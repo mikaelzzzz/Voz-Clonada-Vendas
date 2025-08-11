@@ -238,41 +238,36 @@ async def handle_webhook(request: Request):
 
     try:
         # Rota 0a: Reação de humano para retomar automação
-        # Suporta ambos os formatos de payload:
-        # - type == 'ReactionCallback' e reaction: {'emoji': '✅', ...}
-        # - reaction: {'value': '✅', ...} sem 'type'
         reaction = data.get('reaction') or {}
         emoji = reaction.get('emoji') or reaction.get('value')
         is_reaction_type = data.get('type') == 'ReactionCallback'
         phone_raw = data.get('phone')
 
-        # Se veio de um humano (fromMe) e a reação foi "✅", desativa hibernação
         if (is_reaction_type or reaction) and data.get('fromMe') and emoji == '✅' and phone_raw:
             phone = re.sub(r'\D', '', str(phone_raw))
             logger.info(f"✅ Reação de humano detectada para {phone}. Desativando hibernação.")
             await CacheService.deactivate_hibernation(phone)
             return JSONResponse({"status": "hibernation_deactivated_by_reaction"})
 
-        # Caso seja uma reação mas não atenda os critérios, apenas ignore
         if is_reaction_type or reaction:
             logger.info("Reação recebida não corresponde aos critérios para retomar automação.")
             return JSONResponse({"status": "reaction_ignored"})
 
         # Rota 0: PRIORIDADE MÁXIMA - Mensagem enviada por um humano da equipe
+        # Só ativa hibernação se não foi enviada pela API (fromApi=False)
         if (
             data.get('fromMe', False)
             and not data.get('isStatusReply', False)
             and data.get('reaction') is None
+            and not data.get('fromApi', False)
         ):
             phone = data.get('phone')
             if phone:
                 phone = re.sub(r'\D', '', str(phone))
-                logger.info(f"👨‍💼 Mensagem de humano detectada para {phone}. Ativando modo de hibernação.")
+                logger.info(f"👨‍💼 Mensagem HUMANA detectada para {phone}. Ativando modo de hibernação.")
                 await CacheService.activate_hibernation(phone)
             return JSONResponse({"status": "human_message_detected_hibernation_activated"})
 
-        # Se não for uma mensagem de humano, continua o fluxo normal
-        
         # Rota 1: Webhook de Qualificação de Lead da Zaia
         if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
@@ -443,3 +438,4 @@ async def handle_webhook(request: Request):
         phone_for_log = data.get('phone') or data.get('whatsapp') or 'não identificado'
         print(f"[WEBHOOK_ERROR] Erro ao processar mensagem de {phone_for_log}: {error_message}")
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
+
