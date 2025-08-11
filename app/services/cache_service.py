@@ -84,14 +84,16 @@ class CacheService:
     # --- Lógica de Hibernação ---
     
     @classmethod
-    async def activate_hibernation(cls, phone: str, ttl_hours: int = 24):
-        """Ativa o modo de hibernação para um telefone específico."""
+    async def activate_hibernation(cls, phone: str, grace_minutes: int = 15):
+        """Ativa o modo de hibernação por 12h e cria uma janela de segurança (grace)."""
         try:
             client = cls.get_client()
             if client:
-                ttl_seconds = ttl_hours * 3600
-                client.setex(f"hibernate:{phone}", ttl_seconds, "true")
-                logger.info(f"🤖 Hibernação ativada para {phone} por {ttl_hours} horas.")
+                # Flag principal de hibernação por 12 horas
+                client.setex(f"hibernate:{phone}", 12 * 3600, "true")
+                # Janela de segurança (grace) para resistir a reinícios/corridas
+                client.setex(f"hibernate_grace:{phone}", grace_minutes * 60, "true")
+                logger.info(f"🤖 Hibernação ativada para {phone} (12h, grace {grace_minutes} min).")
         except Exception as e:
             logger.error(f"❌ Erro ao ativar hibernação para {phone}: {e}")
 
@@ -109,15 +111,30 @@ class CacheService:
             return False
         except Exception as e:
             logger.error(f"❌ Erro ao verificar hibernação para {phone}: {e}")
-            return False # Em caso de erro, não hiberna para não perder o lead.
+            return False  # Em caso de erro, não hiberna para não perder o lead.
 
     @classmethod
-    async def deactivate_hibernation(cls, phone: str):
-        """Desativa o modo de hibernação manualmente para um telefone."""
+    async def is_recently_hibernated(cls, phone: str) -> bool:
+        """Verifica se está na janela de segurança (grace)."""
         try:
             client = cls.get_client()
             if client:
-                client.delete(f"hibernate:{phone}")
+                in_grace = client.exists(f"hibernate_grace:{phone}") == 1
+                if in_grace:
+                    logger.info(f"🤖 Verificação de grace para {phone}: ATIVA")
+                return in_grace
+            return False
+        except Exception as e:
+            logger.error(f"❌ Erro ao verificar grace para {phone}: {e}")
+            return False
+
+    @classmethod
+    async def deactivate_hibernation(cls, phone: str):
+        """Desativa o modo de hibernação manualmente para um telefone (remove grace também)."""
+        try:
+            client = cls.get_client()
+            if client:
+                client.delete(f"hibernate:{phone}", f"hibernate_grace:{phone}")
                 logger.info(f"🤖 Hibernação desativada para {phone}.")
         except Exception as e:
-            logger.error(f"❌ Erro ao desativar hibernação para {phone}: {e}") 
+            logger.error(f"❌ Erro ao desativar hibernação para {phone}: {e}")
