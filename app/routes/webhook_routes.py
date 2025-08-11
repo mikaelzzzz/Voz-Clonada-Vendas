@@ -237,6 +237,18 @@ async def handle_webhook(request: Request):
     logger.info(f"Webhook recebido: {data}")
 
     try:
+        # Rota 0a: Reação de humano para retomar automação
+        if data.get('type') == 'ReactionCallback':
+            phone_raw = data.get('phone')
+            if data.get('fromMe') and data.get('reaction', {}).get('emoji') == '✅' and phone_raw:
+                phone = re.sub(r'\D', '', str(phone_raw))
+                logger.info(f"✅ Reação de humano detectada para {phone}. Desativando hibernação.")
+                await CacheService.deactivate_hibernation(phone)
+                return JSONResponse({"status": "hibernation_deactivated_by_reaction"})
+
+            logger.info("Reação recebida não corresponde aos critérios para retomar automação.")
+            return JSONResponse({"status": "reaction_ignored"})
+
         # Rota 0: PRIORIDADE MÁXIMA - Mensagem enviada por um humano da equipe
         if data.get('fromMe', False) and not data.get('isStatusReply', False):
             phone = data.get('phone')
