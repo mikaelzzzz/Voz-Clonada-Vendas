@@ -233,8 +233,8 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
 
 @router.post("")
 async def handle_webhook(request: Request):
-        data = await request.json()
-        logger.info(f"Webhook recebido: {data}")
+    data = await request.json()
+    logger.info(f"Webhook recebido: {data}")
 
     try:
         # Rota 0: Mensagem enviada por um humano da equipe
@@ -312,7 +312,7 @@ async def handle_webhook(request: Request):
 
                 return JSONResponse({"status": "lead_qualified_processed"})
                         
-                except Exception as e:
+            except Exception as e:
                 error_message = f"Erro ao processar qualificação de lead para {phone}: {e}"
                 logger.error(error_message)
                 print(f"[WEBHOOK_ERROR] {error_message}")
@@ -465,20 +465,11 @@ async def handle_webhook(request: Request):
                     
                     return JSONResponse({"status": "message_processed_by_zaia"})
         
-    except Exception as e:
-                # Tratamento de erro geral (movido para abranger tudo)
-                error_message = f"Erro geral no webhook: {e}"
-                logger.error(error_message, exc_info=True)
-                # Tenta extrair o telefone para o log, se disponível
-                phone_for_log = data.get('phone', data.get('whatsapp', 'não identificado'))
-                print(f"[WEBHOOK_ERROR] Erro ao processar mensagem de {phone_for_log}: {error_message}")
-                return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
-
-        # Se nenhum dos webhooks corresponder
+        # Se nenhum webhook corresponder
         else:
             logger.info("Tipo de webhook não processado.")
             return JSONResponse({"status": "event_not_handled"})
-        
+
     except Exception as e:
         error_message = f"Erro fatal no processamento do webhook: {e}"
         logger.error(error_message, exc_info=True)

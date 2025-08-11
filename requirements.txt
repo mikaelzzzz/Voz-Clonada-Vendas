@@ -9,4 +9,5 @@ httpx
 cloudinary
 redis
 langdetect
-gunicorn 
+gunicorn
+aiohttp 
