@@ -280,10 +280,7 @@ async def handle_webhook(request: Request):
         # -------------------------------------------------------------------
         # Rota 2: Mensagem do Cliente da Z-API (lead) - processamento normal
         # -------------------------------------------------------------------
-                # -------------------------------------------------------------------
-        # Rota 2: Mensagem do Cliente da Z-API (lead) - processamento normal
-        # -------------------------------------------------------------------
-        elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
+        if data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
             phone_raw = data.get('phone')
             sender_name = data.get('senderName')
             phone = re.sub(r'\D', '', str(phone_raw))
@@ -292,8 +289,6 @@ async def handle_webhook(request: Request):
             if await CacheService.is_hibernating(phone) or await CacheService.is_recently_hibernated(phone):
                 logger.info(f"🤖 Automação para {phone} em hibernação (ou janela de segurança). Ignorando.")
                 return JSONResponse({"status": "hibernation_mode_active"})
-
-            # (removido) Não usar filtro por sender_name aqui, pois pode ser o nome do chat
 
             if data.get('isGroup'):
                 logger.info("Mensagem de grupo recebida. Ignorando.")
@@ -347,48 +342,60 @@ async def handle_webhook(request: Request):
                     await _handle_zaia_response(phone, is_audio, zaia_response)
                     return JSONResponse({"status": "new_lead_direct_question_processed"})
 
-            else:  # Lead existente
-                logger.info(f"Lead existente ({phone}). Analisando mensagem.")
-                normalized_message = message_text.strip().lower()
-                greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
-                english_greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
+            # Lead existente
+            logger.info(f"Lead existente ({phone}). Analisando mensagem.")
+            normalized_message = message_text.strip().lower()
+            greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+            english_greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
+            
+            is_greeting = normalized_message in greetings or normalized_message in english_greetings
+            lang = detect_language(message_text)
+
+            if is_greeting:
+                logger.info(f"Cumprimento de lead existente em '{lang}'.")
+                first_name = extract_first_name(sender_name)
+                response_message = f"Hello Hello, {first_name}! Como posso te ajudar hoje?"
+                if lang == 'en':
+                    response_message = f"Hello Hello, {first_name}! How can I help you today?"
                 
-                is_greeting = normalized_message in greetings or normalized_message in english_greetings
-                lang = detect_language(message_text)
-
-                if is_greeting:
-                    logger.info(f"Cumprimento de lead existente em '{lang}'.")
-                    first_name = extract_first_name(sender_name)
-                    response_message = f"Hello Hello, {first_name}! Como posso te ajudar hoje?"
-                    if lang == 'en':
-                        response_message = f"Hello Hello, {first_name}! How can I help you today?"
-                    
-                    if is_audio:
-                        elevenlabs_service = ElevenLabsService()
-                        audio_bytes = elevenlabs_service.generate_audio(response_message)
-                        await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=response_message)
-                    else:
-                        await ZAPIService.send_text_with_typing(phone, response_message)
-                    return JSONResponse({"status": "existing_lead_greeted"})
-
+                if is_audio:
+                    elevenlabs_service = ElevenLabsService()
+                    audio_bytes = elevenlabs_service.generate_audio(response_message)
+                    await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=response_message)
                 else:
-                    logger.info("Pergunta de lead existente. Enviando para Zaia com contexto.")
-                    lead_full_data = notion_service.get_lead_data_by_phone(phone)
-                    lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
+                    await ZAPIService.send_text_with_typing(phone, response_message)
+                return JSONResponse({"status": "existing_lead_greeted"})
 
-                    def build_final_prompt(base_message: str) -> str:
-                        client_name = lead_properties.get('Cliente', 'cliente')
-                        first_name = extract_first_name(client_name)
-                        lang = detect_language(base_message)
-                        lang_instruction = "Instrução: Responda em inglês." if lang == 'en' else "Instrução: Responda em português."
-                        parts = [lang_instruction, f"Meu nome é {first_name}."]
-                        if lead_properties.get('Profissão') and lead_properties.get('Profissão') != 'não informado':
-                            parts.append(f"Eu trabalho como {lead_properties.get('Profissão')}.")
-                        parts.append(f"Minha pergunta é: {base_message}")
-                        return " ".join(parts)
-                    
-                    final_prompt = build_final_prompt(message_text)
-                    zaia_service = ZaiaService()
-                    zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
-                    await _handle_zaia_response(phone, is_audio, zaia_response)
-                    return JSONResponse({"status": "message_processed_by_zaia"})
+            logger.info("Pergunta de lead existente. Enviando para Zaia com contexto.")
+            lead_full_data = notion_service.get_lead_data_by_phone(phone)
+            lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
+
+            def build_final_prompt(base_message: str) -> str:
+                client_name = lead_properties.get('Cliente', 'cliente')
+                first_name = extract_first_name(client_name)
+                lang2 = detect_language(base_message)
+                lang_instruction = "Instrução: Responda em inglês." if lang2 == 'en' else "Instrução: Responda em português."
+                parts = [lang_instruction, f"Meu nome é {first_name}."]
+                if lead_properties.get('Profissão') and lead_properties.get('Profissão') != 'não informado':
+                    parts.append(f"Eu trabalho como {lead_properties.get('Profissão')}.")
+                parts.append(f"Minha pergunta é: {base_message}")
+                return " ".join(parts)
+            
+            final_prompt = build_final_prompt(message_text)
+            zaia_service = ZaiaService()
+            zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
+            await _handle_zaia_response(phone, is_audio, zaia_response)
+            return JSONResponse({"status": "message_processed_by_zaia"})
+
+        # ------------------------------------------------
+        # Se nenhum webhook corresponder
+        # ------------------------------------------------
+        logger.info("Tipo de webhook não processado.")
+        return JSONResponse({"status": "event_not_handled"})
+
+    except Exception as e:
+        error_message = f"Erro fatal no processamento do webhook: {e}"
+        logger.error(error_message, exc_info=True)
+        phone_for_log = data.get('phone') or data.get('whatsapp') or 'não identificado'
+        print(f"[WEBHOOK_ERROR] Erro ao processar mensagem de {phone_for_log}: {error_message}")
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
