@@ -21,12 +21,6 @@ router = APIRouter()
 def is_commercial_name(name: str) -> bool:
     """
     Determina se um nome é provavelmente comercial ou de negócio.
-    
-    Args:
-        name (str): Nome a ser analisado
-        
-    Returns:
-        bool: True se for provavelmente comercial, False caso contrário
     """
     if not name or not name.strip():
         return False
@@ -34,7 +28,6 @@ def is_commercial_name(name: str) -> bool:
     name_lower = name.lower()
     name_parts = name.split()
     
-    # Palavras-chave comerciais e de negócios
     commercial_keywords = [
         'beauty', 'hair', 'dresser', 'salon', 'studio', 'clinic', 'consultoria',
         'consulting', 'services', 'solutions', 'enterprise', 'company', 'ltd',
@@ -50,45 +43,35 @@ def is_commercial_name(name: str) -> bool:
         'media', 'production', 'studio', 'agency', 'partners', 'associates'
     ]
     
-    # Iniciais comuns em inglês que indicam empresa/negócio
     business_initials = [
         'ai', 'aii', 'aiii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
         'co', 'corp', 'inc', 'ltd', 'llc', 'plc', 'pty', 'pty ltd',
         'pvt', 'pvt ltd', 'gmbh', 'ag', 'sarl', 'sas', 'spa', 'srl'
     ]
     
-    # Critério 1: Contém palavra-chave comercial
     if any(word in name_lower for word in commercial_keywords):
         logger.info(f"Nome '{name}' identificado como comercial por palavra-chave")
         return True
     
-    # Critério 2: Contém iniciais de negócio
     if any(initial in name_lower for initial in business_initials):
         logger.info(f"Nome '{name}' identificado como comercial por iniciais")
         return True
     
-    # Critério 3: Mais de 3 palavras (provavelmente nome de empresa)
     if len(name_parts) > 3:
         logger.info(f"Nome '{name}' identificado como comercial por ter muitas palavras ({len(name_parts)})")
         return True
     
-    # Critério 4: Contém caracteres típicos de empresa
     business_chars = ['&', '/', '|', '-', '@', '+', '(', ')', '[', ']']
     if any(char in name for char in business_chars):
         logger.info(f"Nome '{name}' identificado como comercial por caracteres especiais")
         return True
     
-    # Critério 5: Padrão de iniciais (ex: AI Mika, AB Company)
-    # Verifica se as primeiras palavras são apenas letras maiúsculas (iniciais)
     if len(name_parts) >= 2:
         first_part = name_parts[0].strip()
-        if (len(first_part) <= 3 and 
-            first_part.isupper() and 
-            first_part.isalpha()):
+        if (len(first_part) <= 3 and first_part.isupper() and first_part.isalpha()):
             logger.info(f"Nome '{name}' identificado como comercial por padrão de iniciais")
             return True
     
-    # Critério 6: Contém números (típico de empresas)
     if any(char.isdigit() for char in name):
         logger.info(f"Nome '{name}' identificado como comercial por conter números")
         return True
@@ -98,27 +81,18 @@ def is_commercial_name(name: str) -> bool:
 def extract_first_name(full_name: str) -> str:
     """
     Extrai o primeiro nome de forma natural, removendo sufixos comerciais e tratando casos especiais.
-    
-    Args:
-        full_name (str): Nome completo do cliente
-        
-    Returns:
-        str: Primeiro nome limpo para uso em conversas
     """
     if not full_name or not full_name.strip():
         return "cliente"
     
-    # Remove espaços extras e normaliza
     name = full_name.strip()
     
-    # Lista de títulos profissionais para pular
     professional_titles = [
         'dr', 'doctor', 'dra', 'doutor', 'doutora', 'eng', 'engineer', 'engenheiro',
         'adv', 'advocacia', 'advogado', 'advogada', 'prof', 'professor', 'professora',
         'cont', 'contador', 'contadora', 'med', 'medicine', 'médico', 'médica'
     ]
     
-    # Lista de sufixos comerciais comuns para remover
     commercial_suffixes = [
         'beauty', 'hair', 'dresser', 'salon', 'studio', 'clinic', 'consultoria',
         'consulting', 'services', 'solutions', 'enterprise', 'company', 'ltd',
@@ -131,32 +105,25 @@ def extract_first_name(full_name: str) -> str:
         'vet', 'pharmacy', 'pharmacist'
     ]
     
-    # Remove caracteres especiais e divide o nome em partes
-    name_clean = re.sub(r'[^\w\s]', ' ', name)  # Remove caracteres especiais
-    # Remove underscores também
+    name_clean = re.sub(r'[^\w\s]', ' ', name)
     name_clean = name_clean.replace('_', ' ')
     name_parts = name_clean.split()
     
-    # Se não há partes válidas após limpeza, retorna cliente
     if not name_parts:
         return "cliente"
     
-    # Se tem apenas uma palavra, retorna ela
     if len(name_parts) == 1:
         return name_parts[0].title()
     
-    # Procura pelo primeiro nome válido (pula títulos profissionais e sufixos comerciais)
     first_name = None
     for part in name_parts:
         part_lower = part.lower()
-        # Se a parte não é um título profissional, não é um sufixo comercial e tem pelo menos 2 caracteres
         if (part_lower not in professional_titles and 
             part_lower not in commercial_suffixes and 
             len(part) >= 2):
             first_name = part.title()
             break
     
-    # Se não encontrou um nome válido, usa a primeira parte que não seja um título
     if not first_name:
         for part in name_parts:
             part_lower = part.lower()
@@ -164,18 +131,14 @@ def extract_first_name(full_name: str) -> str:
                 first_name = part.title()
                 break
     
-    # Se ainda não encontrou, usa a primeira parte
     if not first_name:
         first_name = name_parts[0].title()
     
-    # Tratamento especial para nomes muito longos
     if len(first_name) > 20:
         first_name = first_name[:20]
     
-    # Remove espaços extras que podem ter sobrado
     first_name = first_name.strip()
     
-    # Se ficou vazio após limpeza, usa um nome genérico
     if not first_name:
         first_name = "cliente"
     
@@ -188,44 +151,33 @@ def detect_language(text: str) -> str:
     Retorna 'en' para inglês, 'pt' para português (padrão).
     """
     if not text or not text.strip():
-        return 'pt' # Padrão para português se o texto for vazio
-
+        return 'pt'
     try:
-        # A detecção pode lançar uma exceção para textos muito curtos ou ambíguos
         lang = detect(text)
         logger.info(f"Idioma detectado para o texto '{text[:30]}...': {lang}")
         if lang == 'en':
             return 'en'
     except LangDetectException:
         logger.warning(f"Não foi possível detectar o idioma para o texto: '{text}'. Assumindo português.")
-        # Para textos muito curtos como "ok", "sim", a detecção pode falhar.
-        # Assumir português é uma escolha segura.
-        pass
-    
     return 'pt'
 
 async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict):
     """
-    Função auxiliar para processar a resposta da Zaia, verificando links
-    e enviando a resposta no formato correto (áudio ou texto).
+    Processa a resposta da Zaia, verificando links e enviando áudio/texto conforme necessário.
     """
     if not zaia_response or not zaia_response.get('text'):
         logger.warning("Resposta da Zaia vazia ou inválida.")
         return
 
     ai_response_text = zaia_response.get('text')
-    
-    # Regex para detectar URLs
     url_pattern = r'https?://[^\s]+'
     contains_link = re.search(url_pattern, ai_response_text)
 
-    # Se a mensagem original era áudio E a resposta NÃO contém link, envia áudio
     if is_audio and not contains_link:
         logger.info("Resposta para áudio sem link. Gerando áudio.")
         elevenlabs_service = ElevenLabsService()
         audio_bytes = elevenlabs_service.generate_audio(ai_response_text)
         await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=ai_response_text)
-    # Em todos os outros casos (resposta de texto ou com link), envia texto
     else:
         if contains_link:
             logger.info("Resposta contém um link. Enviando como texto por padrão.")
@@ -237,7 +189,9 @@ async def handle_webhook(request: Request):
     logger.info(f"Webhook recebido: {data}")
 
     try:
-        # Rota 0a: Reação de humano para retomar automação
+        # -----------------------------
+        # Rota 0a: Reação para retomar
+        # -----------------------------
         reaction = data.get('reaction') or {}
         emoji = reaction.get('emoji') or reaction.get('value')
         is_reaction_type = data.get('type') == 'ReactionCallback'
@@ -253,22 +207,26 @@ async def handle_webhook(request: Request):
             logger.info("Reação recebida não corresponde aos critérios para retomar automação.")
             return JSONResponse({"status": "reaction_ignored"})
 
-        # Rota 0: PRIORIDADE MÁXIMA - Mensagem enviada por um humano da equipe
-        # Só ativa hibernação se não foi enviada pela API (fromApi=False)
+        # -----------------------------------------------------------------
+        # Rota 0: Mensagem HUMANA da equipe (ignora fromApi=True) -> hiberna
+        # -----------------------------------------------------------------
         if (
             data.get('fromMe', False)
             and not data.get('isStatusReply', False)
             and data.get('reaction') is None
-            and not data.get('fromApi', False)
+            and not data.get('fromApi', False)  # NÃO hiberna em mensagens da própria API
         ):
             phone = data.get('phone')
             if phone:
                 phone = re.sub(r'\D', '', str(phone))
                 logger.info(f"👨‍💼 Mensagem HUMANA detectada para {phone}. Ativando modo de hibernação.")
-                await CacheService.activate_hibernation(phone)
+                # hiberna por 12h com grace interno de 15 minutos (definido no CacheService)
+                await CacheService.activate_hibernation(phone)  # grace_minutes default=15
             return JSONResponse({"status": "human_message_detected_hibernation_activated"})
 
-        # Rota 1: Webhook de Qualificação de Lead da Zaia
+        # ----------------------------------------------
+        # Rota 1: Webhook de Qualificação de Lead (Zaia)
+        # ----------------------------------------------
         if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
             if not phone_raw or '{{' in str(phone_raw):
@@ -319,15 +277,24 @@ async def handle_webhook(request: Request):
 
             return JSONResponse({"status": "lead_qualified_processed"})
 
-        # Rota 2: Webhook de Mensagem do Cliente da Z-API
+        # -------------------------------------------------------------------
+        # Rota 2: Mensagem do Cliente da Z-API (lead) - processamento normal
+        # -------------------------------------------------------------------
         elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
             phone_raw = data.get('phone')
             sender_name = data.get('senderName')
             phone = re.sub(r'\D', '', str(phone_raw))
 
-            if await CacheService.is_hibernating(phone):
-                logger.info(f"🤖 Automação para {phone} em hibernação. Ignorando.")
+            # BLOQUEIO DE HIBERNAÇÃO + GRACE (12h + 15min)
+            if await CacheService.is_hibernating(phone) or await CacheService.is_recently_hibernated(phone):
+                logger.info(f"🤖 Automação para {phone} em hibernação (ou janela de segurança). Ignorando.")
                 return JSONResponse({"status": "hibernation_mode_active"})
+
+            # (Opcional) Evita eco do próprio bot por nome
+            bot_names = {"ai mika"}  # adicione variações se necessário
+            if sender_name and sender_name.strip().lower() in bot_names:
+                logger.info("Mensagem do próprio bot detectada. Ignorando.")
+                return JSONResponse({"status": "bot_echo_ignored"})
 
             if data.get('isGroup'):
                 logger.info("Mensagem de grupo recebida. Ignorando.")
@@ -427,7 +394,9 @@ async def handle_webhook(request: Request):
                     await _handle_zaia_response(phone, is_audio, zaia_response)
                     return JSONResponse({"status": "message_processed_by_zaia"})
         
+        # ------------------------------------------------
         # Se nenhum webhook corresponder
+        # ------------------------------------------------
         else:
             logger.info("Tipo de webhook não processado.")
             return JSONResponse({"status": "event_not_handled"})
@@ -438,4 +407,3 @@ async def handle_webhook(request: Request):
         phone_for_log = data.get('phone') or data.get('whatsapp') or 'não identificado'
         print(f"[WEBHOOK_ERROR] Erro ao processar mensagem de {phone_for_log}: {error_message}")
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
-
