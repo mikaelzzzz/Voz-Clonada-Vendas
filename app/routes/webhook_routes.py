@@ -11,6 +11,7 @@ from app.services.notion_service import NotionService
 from app.services.openai_service import OpenAIService
 from app.config.settings import Settings
 from app.services.qualification_service import QualificationService
+from app.services.cache_service import CacheService
 
 
 logger = logging.getLogger(__name__)
@@ -232,10 +233,19 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
 
 @router.post("")
 async def handle_webhook(request: Request):
-    data = await request.json()
-    logger.info(f"Webhook recebido: {data}")
+        data = await request.json()
+        logger.info(f"Webhook recebido: {data}")
 
     try:
+        # Rota 0: Mensagem enviada por um humano da equipe
+        if data.get('fromMe', False) and not data.get('isStatusReply', False):
+            phone = data.get('phone')
+            if phone:
+                phone = re.sub(r'\D', '', str(phone))
+                logger.info(f"👨‍💼 Mensagem de humano detectada para {phone}. Ativando modo de hibernação.")
+                await CacheService.activate_hibernation(phone)
+            return JSONResponse({"status": "human_message_detected_hibernation_activated"})
+
         # Rota 1: Webhook de Qualificação de Lead da Zaia
         if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
@@ -301,8 +311,8 @@ async def handle_webhook(request: Request):
                     logger.info(f"Lead {phone} é de baixa prioridade. Nenhuma notificação de vendas será enviada.")
 
                 return JSONResponse({"status": "lead_qualified_processed"})
-                    
-            except Exception as e:
+                        
+                except Exception as e:
                 error_message = f"Erro ao processar qualificação de lead para {phone}: {e}"
                 logger.error(error_message)
                 print(f"[WEBHOOK_ERROR] {error_message}")
@@ -311,6 +321,11 @@ async def handle_webhook(request: Request):
         # Rota 2: Webhook de Mensagem do Cliente da Z-API
         elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
             
+            # VERIFICAÇÃO DE HIBERNAÇÃO
+            if await CacheService.is_hibernating(phone):
+                logger.info(f"🤖 Automação para {phone} está em hibernação. Ignorando mensagem.")
+                return JSONResponse({"status": "hibernation_mode_active"})
+
             # VERIFICAÇÃO: Ignora mensagens de grupo
             if data.get('isGroup'):
                 logger.info("Mensagem de grupo recebida. Ignorando.")
@@ -449,8 +464,8 @@ async def handle_webhook(request: Request):
                     await _handle_zaia_response(phone, is_audio, zaia_response)
                     
                     return JSONResponse({"status": "message_processed_by_zaia"})
-
-            except Exception as e:
+        
+    except Exception as e:
                 # Tratamento de erro geral (movido para abranger tudo)
                 error_message = f"Erro geral no webhook: {e}"
                 logger.error(error_message, exc_info=True)
@@ -463,7 +478,7 @@ async def handle_webhook(request: Request):
         else:
             logger.info("Tipo de webhook não processado.")
             return JSONResponse({"status": "event_not_handled"})
-
+        
     except Exception as e:
         error_message = f"Erro fatal no processamento do webhook: {e}"
         logger.error(error_message, exc_info=True)

@@ -79,4 +79,45 @@ class CacheService:
                     client.delete(*keys)
                     logger.info(f"🗑️ {len(keys)} chats removidos do cache Redis")
         except Exception as e:
-            logger.warning(f"⚠️ Erro ao limpar cache Redis completo: {str(e)}") 
+            logger.warning(f"⚠️ Erro ao limpar cache Redis completo: {str(e)}")
+            
+    # --- Lógica de Hibernação ---
+    
+    @classmethod
+    async def activate_hibernation(cls, phone: str, ttl_hours: int = 24):
+        """Ativa o modo de hibernação para um telefone específico."""
+        try:
+            client = cls.get_client()
+            if client:
+                ttl_seconds = ttl_hours * 3600
+                client.setex(f"hibernate:{phone}", ttl_seconds, "true")
+                logger.info(f"🤖 Hibernação ativada para {phone} por {ttl_hours} horas.")
+        except Exception as e:
+            logger.error(f"❌ Erro ao ativar hibernação para {phone}: {e}")
+
+    @classmethod
+    async def is_hibernating(cls, phone: str) -> bool:
+        """Verifica se um telefone está em modo de hibernação."""
+        try:
+            client = cls.get_client()
+            if client:
+                status = client.get(f"hibernate:{phone}")
+                if status:
+                    logger.info(f"🤖 Verificação de hibernação para {phone}: ATIVA")
+                    return True
+            logger.info(f"🤖 Verificação de hibernação para {phone}: INATIVA")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Erro ao verificar hibernação para {phone}: {e}")
+            return False # Em caso de erro, não hiberna para não perder o lead.
+
+    @classmethod
+    async def deactivate_hibernation(cls, phone: str):
+        """Desativa o modo de hibernação manualmente para um telefone."""
+        try:
+            client = cls.get_client()
+            if client:
+                client.delete(f"hibernate:{phone}")
+                logger.info(f"🤖 Hibernação desativada para {phone}.")
+        except Exception as e:
+            logger.error(f"❌ Erro ao desativar hibernação para {phone}: {e}") 
