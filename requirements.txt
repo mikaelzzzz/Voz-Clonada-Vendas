@@ -8,4 +8,5 @@ openai
 httpx
 cloudinary
 redis
-langdetect 
+langdetect
+gunicorn 
