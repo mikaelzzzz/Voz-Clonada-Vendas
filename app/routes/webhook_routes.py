@@ -247,7 +247,7 @@ async def handle_webhook(request: Request):
             return JSONResponse({"status": "human_message_detected_hibernation_activated"})
 
         # Rota 1: Webhook de Qualificação de Lead da Zaia
-        if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
+        elif 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
 
             if not phone_raw or '{{' in str(phone_raw):
@@ -260,109 +260,97 @@ async def handle_webhook(request: Request):
             motivo = data.get('motivo')
             logger.info(f"Processando qualificação de lead para {phone} (original: {phone_raw})")
 
-            try:
-                notion_service = NotionService()
-                openai_service = OpenAIService()
-                qualification_service = QualificationService()
-                settings = Settings()
-                        
-                # 1. Classifica o lead
-                qualification_level = await qualification_service.classify_lead(motivo, profissao)
-                logger.info(f"Lead {phone} classificado como: {qualification_level}")
-                        
-                # 2. Atualiza o Notion com todas as informações
-                updates = {
-                    "Profissão": profissao,
-                    "Real Motivação": motivo,
-                    "Status": "Qualificado pela IA",
-                    "Nível de Qualificação": qualification_level
-                }
-                notion_service.update_lead_properties(phone, updates)
-                        
-                # Busca os dados completos do lead para tomar a decisão
-                lead_full_data = notion_service.get_lead_data_by_phone(phone)
-                lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
-                alerta_enviado = lead_properties.get('Alerta Enviado', False)
-
-                # 3. Se for de alta prioridade E o alerta ainda não foi enviado, gera e envia a análise
-                if qualification_level == 'Alto' and not alerta_enviado:
-                    logger.info(f"Lead {phone} é de alta prioridade e o alerta ainda não foi enviado. Notificando a equipe.")
+            notion_service = NotionService()
+            openai_service = OpenAIService()
+            qualification_service = QualificationService()
+            settings = Settings()
                     
-                    # Gera o resumo de texto com a IA
-                    summary_text = await openai_service.generate_sales_summary(lead_properties)
+            # 1. Classifica o lead
+            qualification_level = await qualification_service.classify_lead(motivo, profissao)
+            logger.info(f"Lead {phone} classificado como: {qualification_level}")
                     
-                    notion_url = lead_full_data.get('url', 'URL do Notion não encontrada.')
-                    final_message = (
-                        f"{summary_text}\n\n"
-                        f"🔗 *Link do Notion:* {notion_url}\n"
-                        f"📱 *WhatsApp do Lead:* https://wa.me/{phone}"
-                    )
+            # 2. Atualiza o Notion com todas as informações
+            updates = {
+                "Profissão": profissao,
+                "Real Motivação": motivo,
+                "Status": "Qualificado pela IA",
+                "Nível de Qualificação": qualification_level
+            }
+            notion_service.update_lead_properties(phone, updates)
+                    
+            # Busca os dados completos do lead para tomar a decisão
+            lead_full_data = notion_service.get_lead_data_by_phone(phone)
+            lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
+            alerta_enviado = lead_properties.get('Alerta Enviado', False)
 
-                    for sales_phone in settings.SALES_TEAM_PHONES:
-                        await ZAPIService.send_text(sales_phone, final_message)
-                        
-                    # Marca que o alerta foi enviado para não repetir
-                    notion_service.update_lead_properties(phone, {"Alerta Enviado": True})
-                    logger.info(f"Alerta de vendas para o lead {phone} enviado e marcado como concluído.")
+            # 3. Se for de alta prioridade E o alerta ainda não foi enviado, gera e envia a análise
+            if qualification_level == 'Alto' and not alerta_enviado:
+                logger.info(f"Lead {phone} é de alta prioridade e o alerta ainda não foi enviado. Notificando a equipe.")
+                
+                # Gera o resumo de texto com a IA
+                summary_text = await openai_service.generate_sales_summary(lead_properties)
+                
+                notion_url = lead_full_data.get('url', 'URL do Notion não encontrada.')
+                final_message = (
+                    f"{summary_text}\n\n"
+                    f"🔗 *Link do Notion:* {notion_url}\n"
+                    f"📱 *WhatsApp do Lead:* https://wa.me/{phone}"
+                )
 
-                elif alerta_enviado:
-                    logger.info(f"Alerta para o lead {phone} já foi enviado anteriormente. Ignorando.")
-                else: # Lead de baixa prioridade
-                    logger.info(f"Lead {phone} é de baixa prioridade. Nenhuma notificação de vendas será enviada.")
+                for sales_phone in settings.SALES_TEAM_PHONES:
+                    await ZAPIService.send_text(sales_phone, final_message)
+                    
+                # Marca que o alerta foi enviado para não repetir
+                notion_service.update_lead_properties(phone, {"Alerta Enviado": True})
+                logger.info(f"Alerta de vendas para o lead {phone} enviado e marcado como concluído.")
 
-                return JSONResponse({"status": "lead_qualified_processed"})
-                        
-            except Exception as e:
-                error_message = f"Erro ao processar qualificação de lead para {phone}: {e}"
-                logger.error(error_message)
-                print(f"[WEBHOOK_ERROR] {error_message}")
-                return JSONResponse({"status": "error", "detail": error_message}, status_code=500)
+            elif alerta_enviado:
+                logger.info(f"Alerta para o lead {phone} já foi enviado anteriormente. Ignorando.")
+            else: # Lead de baixa prioridade
+                logger.info(f"Lead {phone} é de baixa prioridade. Nenhuma notificação de vendas será enviada.")
+
+            return JSONResponse({"status": "lead_qualified_processed"})
 
         # Rota 2: Webhook de Mensagem do Cliente da Z-API
         elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
-            
-            # VERIFICAÇÃO DE HIBERNAÇÃO
+            phone_raw = data.get('phone')
+            sender_name = data.get('senderName')
+            phone = re.sub(r'\D', '', str(phone_raw))
+
             if await CacheService.is_hibernating(phone):
                 logger.info(f"🤖 Automação para {phone} está em hibernação. Ignorando mensagem.")
                 return JSONResponse({"status": "hibernation_mode_active"})
 
-            # VERIFICAÇÃO: Ignora mensagens de grupo
             if data.get('isGroup'):
                 logger.info("Mensagem de grupo recebida. Ignorando.")
                 return JSONResponse({"status": "group_message_ignored"})
 
-            phone_raw = data.get('phone')
-            sender_name = data.get('senderName')
-            phone = re.sub(r'\D', '', str(phone_raw)) # Normaliza o número
-
-            # Validação básica do número normalizado
             if not phone or not sender_name:
                 logger.warning(f"Telefone ou nome do remetente inválidos após normalização. Original: {phone_raw}")
                 return JSONResponse({"status": "invalid_sender_data"})
 
             logger.info(f"Processando mensagem de {sender_name} ({phone})")
 
-            try:
-                # Extrai o texto da mensagem primeiro
-                message_text = ""
-                is_audio = 'audio' in data and data.get('audio')
-                if is_audio:
-                    whisper_service = WhisperService()
-                    message_text = await whisper_service.transcribe_audio(data['audio']['audioUrl'])
-                elif 'text' in data and data.get('text'):
-                    message_text = data['text'].get('message', '')
+            # Extrai o texto da mensagem primeiro
+            message_text = ""
+            is_audio = 'audio' in data and data.get('audio')
+            if is_audio:
+                whisper_service = WhisperService()
+                message_text = await whisper_service.transcribe_audio(data['audio']['audioUrl'])
+            elif 'text' in data and data.get('text'):
+                message_text = data['text'].get('message', '')
 
-                # Garante que o lead existe no Notion e verifica se é novo
-                notion_service = NotionService()
-                is_new_lead = notion_service.create_or_update_lead(
-                    sender_name=sender_name,
-                    phone=phone,
-                    photo_url=data.get('photo')
-                )
+            # Garante que o lead existe no Notion e verifica se é novo
+            notion_service = NotionService()
+            is_new_lead = notion_service.create_or_update_lead(
+                sender_name=sender_name,
+                phone=phone,
+                photo_url=data.get('photo')
+            )
 
-                # Se for um novo lead, verifica se já fez uma pergunta direta
-                if is_new_lead:
-                    logger.info(f"Novo lead detectado ({phone}). Verificando se já fez uma pergunta direta.")
+            # Se for um novo lead, verifica se já fez uma pergunta direta
+            if is_new_lead:
+                logger.info(f"Novo lead detectado ({phone}). Verificando se já fez uma pergunta direta.")
                         
                     # Extrai o primeiro nome
                     first_name = extract_first_name(sender_name)
