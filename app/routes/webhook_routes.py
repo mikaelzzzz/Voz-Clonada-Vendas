@@ -238,16 +238,23 @@ async def handle_webhook(request: Request):
 
     try:
         # Rota 0a: Reação de humano para retomar automação
-        reaction = data.get('reaction')
-        if reaction:
-            phone_raw = data.get('phone')
-            emoji = reaction.get('value')
-            if data.get('fromMe') and emoji == '✅' and phone_raw:
-                phone = re.sub(r'\D', '', str(phone_raw))
-                logger.info(f"✅ Reação de humano detectada para {phone}. Desativando hibernação.")
-                await CacheService.deactivate_hibernation(phone)
-                return JSONResponse({"status": "hibernation_deactivated_by_reaction"})
+        # Suporta ambos os formatos de payload:
+        # - type == 'ReactionCallback' e reaction: {'emoji': '✅', ...}
+        # - reaction: {'value': '✅', ...} sem 'type'
+        reaction = data.get('reaction') or {}
+        emoji = reaction.get('emoji') or reaction.get('value')
+        is_reaction_type = data.get('type') == 'ReactionCallback'
+        phone_raw = data.get('phone')
 
+        # Se veio de um humano (fromMe) e a reação foi "✅", desativa hibernação
+        if (is_reaction_type or reaction) and data.get('fromMe') and emoji == '✅' and phone_raw:
+            phone = re.sub(r'\D', '', str(phone_raw))
+            logger.info(f"✅ Reação de humano detectada para {phone}. Desativando hibernação.")
+            await CacheService.deactivate_hibernation(phone)
+            return JSONResponse({"status": "hibernation_deactivated_by_reaction"})
+
+        # Caso seja uma reação mas não atenda os critérios, apenas ignore
+        if is_reaction_type or reaction:
             logger.info("Reação recebida não corresponde aos critérios para retomar automação.")
             return JSONResponse({"status": "reaction_ignored"})
 
@@ -379,7 +386,7 @@ async def handle_webhook(request: Request):
                     await _handle_zaia_response(phone, is_audio, zaia_response)
                     return JSONResponse({"status": "new_lead_direct_question_processed"})
 
-            else: # Lead existente
+            else:  # Lead existente
                 logger.info(f"Lead existente ({phone}). Analisando mensagem.")
                 normalized_message = message_text.strip().lower()
                 greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
@@ -435,4 +442,4 @@ async def handle_webhook(request: Request):
         logger.error(error_message, exc_info=True)
         phone_for_log = data.get('phone') or data.get('whatsapp') or 'não identificado'
         print(f"[WEBHOOK_ERROR] Erro ao processar mensagem de {phone_for_log}: {error_message}")
-        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500) 
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
