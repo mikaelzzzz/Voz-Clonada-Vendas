@@ -238,9 +238,11 @@ async def handle_webhook(request: Request):
 
     try:
         # Rota 0a: Reação de humano para retomar automação
-        if data.get('reaction') is not None:
+        reaction = data.get('reaction')
+        if reaction:
             phone_raw = data.get('phone')
-            if data.get('fromMe') and data.get('reaction', {}).get('value') == '✅' and phone_raw:
+            emoji = reaction.get('value')
+            if data.get('fromMe') and emoji == '✅' and phone_raw:
                 phone = re.sub(r'\D', '', str(phone_raw))
                 logger.info(f"✅ Reação de humano detectada para {phone}. Desativando hibernação.")
                 await CacheService.deactivate_hibernation(phone)
