@@ -237,7 +237,7 @@ async def handle_webhook(request: Request):
     logger.info(f"Webhook recebido: {data}")
 
     try:
-        # Rota 0: Mensagem enviada por um humano da equipe
+        # Rota 0: PRIORIDADE MÁXIMA - Mensagem enviada por um humano da equipe
         if data.get('fromMe', False) and not data.get('isStatusReply', False):
             phone = data.get('phone')
             if phone:
@@ -246,8 +246,10 @@ async def handle_webhook(request: Request):
                 await CacheService.activate_hibernation(phone)
             return JSONResponse({"status": "human_message_detected_hibernation_activated"})
 
+        # Se não for uma mensagem de humano, continua o fluxo normal
+        
         # Rota 1: Webhook de Qualificação de Lead da Zaia
-        elif 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
+        if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
             if not phone_raw or '{{' in str(phone_raw):
                 error_msg = f"Webhook de qualificação recebido com telefone inválido: {phone_raw}"
