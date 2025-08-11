@@ -280,6 +280,9 @@ async def handle_webhook(request: Request):
         # -------------------------------------------------------------------
         # Rota 2: Mensagem do Cliente da Z-API (lead) - processamento normal
         # -------------------------------------------------------------------
+                # -------------------------------------------------------------------
+        # Rota 2: Mensagem do Cliente da Z-API (lead) - processamento normal
+        # -------------------------------------------------------------------
         elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
             phone_raw = data.get('phone')
             sender_name = data.get('senderName')
@@ -290,11 +293,7 @@ async def handle_webhook(request: Request):
                 logger.info(f"🤖 Automação para {phone} em hibernação (ou janela de segurança). Ignorando.")
                 return JSONResponse({"status": "hibernation_mode_active"})
 
-            # (Opcional) Evita eco do próprio bot por nome
-            bot_names = {"ai mika"}  # adicione variações se necessário
-            if sender_name and sender_name.strip().lower() in bot_names:
-                logger.info("Mensagem do próprio bot detectada. Ignorando.")
-                return JSONResponse({"status": "bot_echo_ignored"})
+            # (removido) Não usar filtro por sender_name aqui, pois pode ser o nome do chat
 
             if data.get('isGroup'):
                 logger.info("Mensagem de grupo recebida. Ignorando.")
@@ -393,17 +392,3 @@ async def handle_webhook(request: Request):
                     zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
                     await _handle_zaia_response(phone, is_audio, zaia_response)
                     return JSONResponse({"status": "message_processed_by_zaia"})
-        
-        # ------------------------------------------------
-        # Se nenhum webhook corresponder
-        # ------------------------------------------------
-        else:
-            logger.info("Tipo de webhook não processado.")
-            return JSONResponse({"status": "event_not_handled"})
-
-    except Exception as e:
-        error_message = f"Erro fatal no processamento do webhook: {e}"
-        logger.error(error_message, exc_info=True)
-        phone_for_log = data.get('phone') or data.get('whatsapp') or 'não identificado'
-        print(f"[WEBHOOK_ERROR] Erro ao processar mensagem de {phone_for_log}: {error_message}")
-        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
