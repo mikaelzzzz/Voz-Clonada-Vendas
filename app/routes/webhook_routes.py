@@ -218,29 +218,8 @@ async def handle_webhook(request: Request):
         return JSONResponse({"status": "invalid_request_body"}, status_code=400)
 
     try:
-        # Extrai o telefone de forma unificada para verificação de cooldown
-        phone_raw = data.get('phone') or data.get('whatsapp')
-        if not phone_raw:
-            return JSONResponse({"status": "no_phone_found"})
-        
-        phone = re.sub(r'\D', '', str(phone_raw))
-        
-        # VERIFICAÇÃO DE COOLDOWN - A PRIMEIRA COISA A SER FEITA
-        if is_on_cooldown(phone):
-            return JSONResponse({"status": "on_cooldown"})
-
-        # Se não está em cooldown, ativa-o imediatamente antes de processar
-        set_cooldown(phone)
-
-        # Rota 0: Mensagem de humano da equipe (agora sem hibernação)
-        if data.get('fromMe', False) and not data.get('isStatusReply', False):
-            logger.info(f"👨‍💼 Mensagem de humano detectada para {phone}. Ignorando para não causar loop.")
-            return JSONResponse({"status": "human_message_ignored"})
-
-        # Se não for uma mensagem de humano, continua o fluxo normal
-
-        # Rota 1: Webhook de Qualificação de Lead da Zaia
-        elif 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
+        # Rota 1: Webhook de Qualificação da Zaia (PROCESSADO SEMPRE)
+        if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
             if not phone_raw or '{{' in str(phone_raw):
                 return JSONResponse({"status": "invalid_phone_variable"}, status_code=400)
@@ -288,11 +267,28 @@ async def handle_webhook(request: Request):
 
             return JSONResponse({"status": "lead_qualified_processed"})
 
+        # Extrai o telefone para as rotas restantes
+        phone_raw = data.get('phone')
+        if not phone_raw:
+            return JSONResponse({"status": "no_phone_found_for_client_message"})
+
+        phone = re.sub(r'\D', '', str(phone_raw))
+
+        # VERIFICAÇÃO DE COOLDOWN (APENAS PARA MENSAGENS DO CLIENTE)
+        if is_on_cooldown(phone):
+            return JSONResponse({"status": "on_cooldown"})
+
+        # Ativa o cooldown para a próxima mensagem do cliente
+        set_cooldown(phone)
+
+        # Rota 0: Mensagem de humano da equipe
+        if data.get('fromMe', False) and not data.get('isStatusReply', False):
+            logger.info(f"👨‍💼 Mensagem de humano detectada para {phone}. Ignorando para não causar loop.")
+            return JSONResponse({"status": "human_message_ignored"})
+
         # Rota 2: Webhook de Mensagem do Cliente da Z-API
-        elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
-            phone_raw = data.get('phone')
+        elif data.get('type') == 'ReceivedCallback':
             sender_name = data.get('senderName')
-            phone = re.sub(r'\D', '', str(phone_raw))
 
             if data.get('isGroup'):
                 logger.info("Mensagem de grupo recebida. Ignorando.")
