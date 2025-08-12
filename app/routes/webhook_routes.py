@@ -222,10 +222,13 @@ async def handle_webhook(request: Request):
             elif 'text' in data and data.get('text'):
                 message_text = data['text'].get('message', '')
 
+            # Instancia os serviços que serão usados em múltiplos fluxos
             notion_service = NotionService()
-            lead_data = notion_service.get_lead_data_by_phone(phone)
-            
+            zaia_service = ZaiaService()
+            whisper_service = WhisperService()
+
             # --- FLUXO DE CONFIRMAÇÃO DE NOME ---
+            lead_data = notion_service.get_lead_data_by_phone(phone)
             if lead_data and lead_data.get('properties', {}).get('Aguardando Confirmação Nome', False):
                 logger.info(f"Recebida confirmação de nome de {phone}: '{message_text}'")
                 confirmed_name = extract_first_name(message_text)
@@ -251,7 +254,6 @@ async def handle_webhook(request: Request):
                         return " ".join(parts)
 
                     final_prompt = build_prompt_after_confirmation(primeira_mensagem_salva)
-                    zaia_service = ZaiaService()
                     zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
                     await _handle_zaia_response(phone, is_audio, zaia_response) # is_audio pode não ser relevante aqui, mas mantemos
                     
@@ -267,7 +269,8 @@ async def handle_webhook(request: Request):
             if is_new_lead:
                 notion_service.create_or_update_lead(sender_name, phone, data.get('photo'))
                 
-                # Usa a IA para analisar o nome
+                # Instancia o serviço de qualificação aqui, onde ele é necessário
+                qualification_service = QualificationService()
                 name_analysis = await qualification_service.analyze_name_with_ai(sender_name)
                 name_type = name_analysis.get("type", "Pessoa")
                 extracted_name = name_analysis.get("extracted_name")
