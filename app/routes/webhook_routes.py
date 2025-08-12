@@ -287,11 +287,16 @@ async def handle_webhook(request: Request):
             if is_new_lead:
                 notion_service.create_or_update_lead(sender_name, phone, data.get('photo'))
                 
-                # Instancia o serviço de qualificação para usar a IA
                 qualification_service = QualificationService()
                 name_analysis = await qualification_service.analyze_name_with_ai(sender_name)
                 name_type = name_analysis.get("type", "Pessoa")
                 extracted_name = name_analysis.get("extracted_name")
+
+                # Define se a mensagem é um cumprimento para usar nos cenários abaixo
+                normalized_message = message_text.strip().lower()
+                greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+                english_greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
+                is_greeting = normalized_message in greetings or normalized_message in english_greetings
 
                 # Cenário 1: Nome puramente comercial
                 if name_type == 'Empresa':
