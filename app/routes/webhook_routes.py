@@ -10,6 +10,7 @@ from app.services.notion_service import NotionService
 from app.services.openai_service import OpenAIService
 from app.config.settings import Settings
 from app.services.qualification_service import QualificationService
+from langdetect import detect, LangDetectException
 
 
 logger = logging.getLogger(__name__)
@@ -123,7 +124,53 @@ def extract_first_name(full_name: str) -> str:
     
     first_name = first_name.strip()
     
-    return first_name if first_name else "cliente"
+    logger.info(f"Nome original: '{full_name}' -> Primeiro nome extraído: '{first_name}'")
+    return first_name
+
+def detect_language(text: str) -> str:
+    """
+    Detecta o idioma de um texto (inglês ou português) usando langdetect.
+    Retorna 'en' para inglês, 'pt' para português (padrão).
+    """
+    if not text or not text.strip():
+        return 'pt' # Padrão para português se o texto for vazio
+
+    try:
+        # A detecção pode lançar uma exceção para textos muito curtos ou ambíguos
+        lang = detect(text)
+        logger.info(f"Idioma detectado para o texto '{text[:30]}...': {lang}")
+        if lang == 'en':
+            return 'en'
+    except LangDetectException:
+        logger.warning(f"Não foi possível detectar o idioma para o texto: '{text}'. Assumindo português.")
+        # Para textos muito curtos como "ok", "sim", a detecção pode falhar.
+        # Assumir português é uma escolha segura.
+        pass
+    
+    return 'pt'
+
+async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict):
+    """
+    Processa a resposta da Zaia, verificando links e enviando áudio/texto conforme necessário.
+    """
+    if zaia_response.get('text'):
+        ai_response_text = zaia_response.get('text')
+        
+        # Regex para detectar URLs na resposta da IA
+        url_pattern = r'https?://[^\s]+'
+        contains_link = re.search(url_pattern, ai_response_text)
+
+        # Se a mensagem original era áudio E a resposta NÃO contém link, envia áudio
+        if is_audio and not contains_link:
+            logger.info("Resposta para áudio sem link. Gerando áudio.")
+            elevenlabs_service = ElevenLabsService()
+            audio_bytes = elevenlabs_service.generate_audio(ai_response_text)
+            await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=ai_response_text)
+        # Em todos os outros casos (resposta de texto, ou resposta com link), envia texto
+        else:
+            if contains_link:
+                logger.info("Resposta contém um link. Enviando como texto por padrão.")
+            await ZAPIService.send_text_with_typing(phone, ai_response_text)
 
 @router.post("")
 async def handle_webhook(request: Request):
