@@ -267,16 +267,9 @@ async def handle_webhook(request: Request):
             if is_new_lead:
                 notion_service.create_or_update_lead(sender_name, phone, data.get('photo'))
                 
-                if is_commercial_name(sender_name):
-                    logger.info(f"Nome comercial detectado: '{sender_name}'. Solicitando confirmação.")
-                    
-                    # Salva a primeira mensagem se ela não for um simples cumprimento
-                    normalized_message = message_text.strip().lower()
-                    greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
-                    english_greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
-                    if not (normalized_message in greetings or normalized_message in english_greetings):
-                        notion_service.update_lead_properties(phone, {"Primeira Mensagem": message_text})
-
+                # Usa a IA para verificar se o nome é comercial
+                if await qualification_service.is_likely_commercial_name_with_ai(sender_name):
+                    logger.info(f"Nome comercial detectado por IA: '{sender_name}'. Solicitando confirmação.")
                     msg = f"Hello Hello! Vi que seu nome está como '{sender_name}'. Este é o nome do seu negócio? Se sim, como posso te chamar?"
                     await ZAPIService.send_text_with_typing(phone, msg)
                     notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
