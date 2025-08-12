@@ -167,7 +167,7 @@ class NotionService:
                 properties[key] = {"multi_select": [{"name": str(value)}]}
             elif key == 'Link Rápido WhatsApp':
                 properties[key] = {"url": str(value)}
-            elif key == 'Alerta Enviado':
+            elif key == 'Alerta Enviado' or key == 'Aguardando Confirmação Nome':
                 properties[key] = {"checkbox": bool(value)}
             # Para outros campos, assume rich_text
             else:
