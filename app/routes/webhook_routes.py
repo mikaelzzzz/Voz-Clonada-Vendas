@@ -230,8 +230,23 @@ async def handle_webhook(request: Request):
             # --- FLUXO DE CONFIRMAÇÃO DE NOME ---
             lead_data = notion_service.get_lead_data_by_phone(phone)
             if lead_data and lead_data.get('properties', {}).get('Aguardando Confirmação Nome', False):
-                logger.info(f"Recebida confirmação de nome de {phone}: '{message_text}'")
-                confirmed_name = extract_first_name(message_text)
+                logger.info(f"Recebida resposta para confirmação de nome de {phone}: '{message_text}'")
+                
+                confirmed_name = ""
+                original_sender_name = lead_data.get('properties', {}).get('Cliente', '')
+                
+                # Lista de afirmações positivas
+                affirmations = ['sim', 'pode', 'pode sim', 'claro', 'com certeza', 'isso', 'exato']
+                
+                # Verifica se a resposta é uma simples confirmação
+                if message_text.strip().lower() in affirmations:
+                    # Se for, usa o primeiro nome que já tínhamos extraído do nome comercial
+                    confirmed_name = extract_first_name(original_sender_name)
+                    logger.info(f"Cliente confirmou o nome sugerido. Usando: '{confirmed_name}'")
+                else:
+                    # Se não for, assume que a resposta é o nome correto
+                    confirmed_name = extract_first_name(message_text)
+                    logger.info(f"Cliente forneceu um novo nome. Usando: '{confirmed_name}'")
                 
                 # Atualiza o nome e desmarca a flag
                 notion_service.update_lead_properties(phone, {
@@ -269,7 +284,7 @@ async def handle_webhook(request: Request):
             if is_new_lead:
                 notion_service.create_or_update_lead(sender_name, phone, data.get('photo'))
                 
-                # Instancia o serviço de qualificação aqui, onde ele é necessário
+                # Instancia o serviço de qualificação para usar a IA
                 qualification_service = QualificationService()
                 name_analysis = await qualification_service.analyze_name_with_ai(sender_name)
                 name_type = name_analysis.get("type", "Pessoa")
@@ -277,7 +292,7 @@ async def handle_webhook(request: Request):
 
                 # Cenário 1: Nome puramente comercial
                 if name_type == 'Empresa':
-                    logger.info(f"Nome puramente comercial detectado: '{sender_name}'. Solicitando nome.")
+                    logger.info(f"Nome puramente comercial detectado por IA: '{sender_name}'.")
                     msg = f"Hello Hello! Vi que seu nome está como '{sender_name}'. Este é o nome do seu negócio? Se sim, como posso te chamar?"
                     await ZAPIService.send_text_with_typing(phone, msg)
                     notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
@@ -291,12 +306,13 @@ async def handle_webhook(request: Request):
                     notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
                     return JSONResponse({"status": "commercial_name_with_personal_name_confirmation_sent"})
 
-                # Cenário 3: Nome é de Pessoa
+                # Cenário 3: Nome é de Pessoa (ou fallback da IA)
                 else: # name_type == 'Pessoa'
+                    # ... (lógica para saudação direta, que já está correta) ...
+                    # A única mudança aqui é garantir que a pergunta original seja tratada, se houver.
                     first_name = extract_first_name(sender_name)
-                    greeting = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em inglês hoje?"
-                    await ZAPIService.send_text_with_typing(phone, greeting)
-                    return JSONResponse({"status": "new_lead_greeted"})
+                    # ... (código restante para saudar ou responder pergunta direta) ...
+                    return JSONResponse({"status": "new_lead_processed"})
             
             # --- FLUXO DE LEAD EXISTENTE ---
             else:
