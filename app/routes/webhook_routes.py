@@ -12,7 +12,6 @@ from app.services.notion_service import NotionService
 from app.services.openai_service import OpenAIService
 from app.config.settings import Settings
 from app.services.qualification_service import QualificationService
-from app.services.cache_service import CacheService
 
 
 logger = logging.getLogger(__name__)
