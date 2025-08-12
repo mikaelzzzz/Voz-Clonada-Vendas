@@ -203,8 +203,19 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
 
 @router.post("")
 async def handle_webhook(request: Request):
-    data = await request.json()
-    logger.info(f"Webhook recebido: {data}")
+    try:
+        data = await request.json()
+        logger.info(f"--- NOVO WEBHOOK RECEBIDO ---")
+        logger.info(f"PAYLOAD COMPLETO: {data}")
+    except Exception as e:
+        logger.error(f"Erro ao ler o JSON do webhook: {e}")
+        # Tenta ler o corpo como texto bruto para depuração
+        try:
+            raw_body = await request.body()
+            logger.error(f"CORPO BRUTO RECEBIDO: {raw_body.decode('utf-8')}")
+        except:
+            pass
+        return JSONResponse({"status": "invalid_request_body"}, status_code=400)
 
     try:
         # Extrai o telefone de forma unificada para verificação de cooldown
