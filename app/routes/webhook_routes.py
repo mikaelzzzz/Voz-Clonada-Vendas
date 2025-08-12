@@ -232,22 +232,25 @@ async def handle_webhook(request: Request):
             if lead_data and lead_data.get('properties', {}).get('Aguardando Confirmação Nome', False):
                 logger.info(f"Recebida resposta para confirmação de nome de {phone}: '{message_text}'")
                 
-                confirmed_name = ""
                 original_sender_name = lead_data.get('properties', {}).get('Cliente', '')
+                suggested_name = extract_first_name(original_sender_name)
                 
-                # Lista de afirmações positivas
-                affirmations = ['sim', 'pode', 'pode sim', 'claro', 'com certeza', 'isso', 'exato']
+                # Usa a IA para interpretar a resposta do cliente
+                qualification_service = QualificationService()
+                interpretation = await qualification_service.interpret_name_confirmation_with_ai(suggested_name, message_text)
                 
-                # Verifica se a resposta é uma simples confirmação
-                if message_text.strip().lower() in affirmations:
-                    # Se for, usa o primeiro nome que já tínhamos extraído do nome comercial
-                    confirmed_name = extract_first_name(original_sender_name)
-                    logger.info(f"Cliente confirmou o nome sugerido. Usando: '{confirmed_name}'")
-                else:
-                    # Se não for, assume que a resposta é o nome correto
+                confirmed_name = ""
+                
+                if interpretation.get("confirmation") == "positive":
+                    confirmed_name = suggested_name
+                    logger.info(f"IA interpretou como confirmação positiva. Usando nome sugerido: '{confirmed_name}'")
+                elif interpretation.get("confirmation") == "new_name" and interpretation.get("name"):
+                    confirmed_name = extract_first_name(interpretation.get("name"))
+                    logger.info(f"IA detectou um novo nome. Usando: '{confirmed_name}'")
+                else: # Fallback para negação ou resposta desconhecida
                     confirmed_name = extract_first_name(message_text)
-                    logger.info(f"Cliente forneceu um novo nome. Usando: '{confirmed_name}'")
-                
+                    logger.warning(f"IA não conseguiu confirmar o nome. Fazendo fallback e extraindo da resposta: '{confirmed_name}'")
+
                 # Atualiza o nome e desmarca a flag
                 notion_service.update_lead_properties(phone, {
                     "Cliente": confirmed_name,

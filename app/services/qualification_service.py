@@ -100,3 +100,41 @@ class QualificationService:
             # Fallback seguro
         
         return {"type": "Pessoa", "extracted_name": name.split()[0]} 
+
+    async def interpret_name_confirmation_with_ai(self, suggested_name: str, user_response: str) -> dict:
+        """
+        Usa o GPT-4o para interpretar a resposta do usuário a uma pergunta de confirmação de nome.
+        """
+        if not self.client or not user_response:
+            return {"confirmation": "unknown"}
+
+        try:
+            prompt = (
+                f"Contexto: Eu sou um bot de atendimento e perguntei a um cliente se posso chamá-lo de '{suggested_name}'.\n"
+                f"A resposta do cliente foi: '{user_response}'.\n\n"
+                "Analise a resposta do cliente e me retorne um JSON com uma das seguintes estruturas:\n"
+                "1. Se for uma confirmação positiva (sim, pode, claro, ok, pode ser), retorne: {\"confirmation\": \"positive\"}\n"
+                "2. Se ele fornecer um nome diferente, retorne: {\"confirmation\": \"new_name\", \"name\": \"[nome extraído]\"}\n"
+                "3. Se for uma negação ou uma resposta não relacionada, retorne: {\"confirmation\": \"negative\"}"
+            )
+
+            response = await self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=40,
+                temperature=0,
+                response_format={"type": "json_object"}
+            )
+            
+            import json
+            result = json.loads(response.choices[0].message.content)
+            logger.info(f"Interpretação da confirmação de nome para '{user_response}': {result}")
+            
+            if 'confirmation' in result:
+                return result
+
+        except Exception as e:
+            logger.error(f"Erro ao interpretar confirmação de nome com GPT-4o: {e}")
+            
+        # Fallback seguro
+        return {"confirmation": "unknown"} 
