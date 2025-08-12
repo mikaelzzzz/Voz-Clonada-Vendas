@@ -60,35 +60,43 @@ class QualificationService:
         logger.info("Nenhuma regra específica aplicada. Classificando como 'Baixo' por padrão.")
         return "Baixo"
 
-    async def is_likely_commercial_name_with_ai(self, name: str) -> bool:
+    async def analyze_name_with_ai(self, name: str) -> dict:
         """
-        Usa um modelo de IA para determinar se um nome é de pessoa ou de empresa.
-        Retorna True se for provável que seja um nome comercial.
+        Usa um modelo de IA para analisar um nome e determinar se é de pessoa, empresa,
+        ou uma empresa com um nome pessoal embutido.
+        Retorna um dicionário com o tipo e, opcionalmente, o nome extraído.
         """
+        # Se não houver cliente de IA ou o nome for muito curto, assume que é pessoal
         if not self.client or not name or len(name.split()) < 2:
-            # Se não houver cliente de IA ou o nome for muito curto, assume que é pessoal
-            return False
+            return {"type": "Pessoa", "extracted_name": name.split()[0]}
 
         try:
             prompt = (
-                f"O nome a seguir, '{name}', parece ser o nome de uma pessoa ou o nome de uma empresa/negócio? "
-                "Responda apenas com uma única palavra: 'Pessoa' ou 'Empresa'."
+                f"Analise o nome a seguir: '{name}'. "
+                "1. Ele parece ser um nome de pessoa ou um nome de empresa/negócio? "
+                "2. Se parecer um nome de empresa que contém um nome pessoal (ex: 'Janelas da Maria'), extraia apenas o nome pessoal. "
+                "Responda em JSON com duas chaves: 'type' ('Pessoa', 'Empresa', ou 'Empresa com nome') e, se aplicável, 'extracted_name'."
             )
             
             response = await self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=5,
+                max_tokens=50,
                 temperature=0,
+                response_format={"type": "json_object"}
             )
             
-            answer = response.choices[0].message.content.strip().lower()
-            logger.info(f"Análise de nome com IA para '{name}': {answer}")
+            # Tenta extrair e validar o JSON da resposta
+            import json
+            result = json.loads(response.choices[0].message.content)
+            logger.info(f"Análise de nome com IA para '{name}': {result}")
             
-            # Retorna True se a resposta contiver "empresa"
-            return "empresa" in answer
-
+            # Valida o resultado para garantir que tem as chaves esperadas
+            if 'type' in result and isinstance(result['type'], str):
+                return result
+            
         except Exception as e:
-            logger.error(f"Erro ao analisar nome com OpenAI: {e}")
-            # Em caso de erro na API, assume que o nome é pessoal para não interromper o fluxo
-            return False 
+            logger.error(f"Erro ao analisar nome com OpenAI ou ao parsear JSON: {e}")
+            # Fallback seguro
+        
+        return {"type": "Pessoa", "extracted_name": name.split()[0]} 

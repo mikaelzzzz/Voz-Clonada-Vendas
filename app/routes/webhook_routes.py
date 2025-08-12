@@ -267,14 +267,29 @@ async def handle_webhook(request: Request):
             if is_new_lead:
                 notion_service.create_or_update_lead(sender_name, phone, data.get('photo'))
                 
-                # Usa a IA para verificar se o nome é comercial
-                if await qualification_service.is_likely_commercial_name_with_ai(sender_name):
-                    logger.info(f"Nome comercial detectado por IA: '{sender_name}'. Solicitando confirmação.")
+                # Usa a IA para analisar o nome
+                name_analysis = await qualification_service.analyze_name_with_ai(sender_name)
+                name_type = name_analysis.get("type", "Pessoa")
+                extracted_name = name_analysis.get("extracted_name")
+
+                # Cenário 1: Nome puramente comercial
+                if name_type == 'Empresa':
+                    logger.info(f"Nome puramente comercial detectado: '{sender_name}'. Solicitando nome.")
                     msg = f"Hello Hello! Vi que seu nome está como '{sender_name}'. Este é o nome do seu negócio? Se sim, como posso te chamar?"
                     await ZAPIService.send_text_with_typing(phone, msg)
                     notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
                     return JSONResponse({"status": "commercial_name_confirmation_sent"})
-                else:
+
+                # Cenário 2: Nome comercial com nome pessoal detectado
+                elif name_type == 'Empresa com nome' and extracted_name:
+                    logger.info(f"Nome comercial com nome pessoal '{extracted_name}' detectado em '{sender_name}'.")
+                    msg = f"Hello Hello, que bom ter você por aqui! Vi que seu nome está como '{sender_name}'. Posso te chamar de {extracted_name} mesmo? Ou como prefere que eu te chame?"
+                    await ZAPIService.send_text_with_typing(phone, msg)
+                    notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
+                    return JSONResponse({"status": "commercial_name_with_personal_name_confirmation_sent"})
+
+                # Cenário 3: Nome é de Pessoa
+                else: # name_type == 'Pessoa'
                     first_name = extract_first_name(sender_name)
                     greeting = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em inglês hoje?"
                     await ZAPIService.send_text_with_typing(phone, greeting)
