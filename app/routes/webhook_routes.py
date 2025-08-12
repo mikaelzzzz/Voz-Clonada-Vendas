@@ -11,7 +11,6 @@ from app.services.notion_service import NotionService
 from app.services.openai_service import OpenAIService
 from app.config.settings import Settings
 from app.services.qualification_service import QualificationService
-from app.services.cache_service import CacheService
 
 
 logger = logging.getLogger(__name__)
@@ -189,51 +188,20 @@ async def handle_webhook(request: Request):
     logger.info(f"Webhook recebido: {data}")
 
     try:
-        # -----------------------------
-        # Rota 0a: Reação para retomar
-        # -----------------------------
-        reaction = data.get('reaction') or {}
-        emoji = reaction.get('emoji') or reaction.get('value')
-        is_reaction_type = data.get('type') == 'ReactionCallback'
-        phone_raw = data.get('phone')
-
-        if (is_reaction_type or reaction) and data.get('fromMe') and emoji == '✅' and phone_raw:
-            phone = re.sub(r'\D', '', str(phone_raw))
-            logger.info(f"✅ Reação de humano detectada para {phone}. Desativando hibernação.")
-            await CacheService.deactivate_hibernation(phone)
-            return JSONResponse({"status": "hibernation_deactivated_by_reaction"})
-
-        if is_reaction_type or reaction:
-            logger.info("Reação recebida não corresponde aos critérios para retomar automação.")
-            return JSONResponse({"status": "reaction_ignored"})
-
-        # -----------------------------------------------------------------
-        # Rota 0: Mensagem HUMANA da equipe (ignora fromApi=True) -> hiberna
-        # -----------------------------------------------------------------
-        if (
-            data.get('fromMe', False)
-            and not data.get('isStatusReply', False)
-            and data.get('reaction') is None
-            and not data.get('fromApi', False)  # NÃO hiberna em mensagens da própria API
-        ):
-            phone = data.get('phone')
+        # Rota 0: Mensagem de humano da equipe -> Ativa hibernação
+        if data.get('fromMe', False) and not data.get('isStatusReply', False):
+            phone = re.sub(r'\D', '', str(data.get('phone', '')))
             if phone:
-                phone = re.sub(r'\D', '', str(phone))
-                logger.info(f"👨‍💼 Mensagem HUMANA detectada para {phone}. Ativando modo de hibernação.")
-                # hiberna por 12h com grace interno de 15 minutos (definido no CacheService)
-                await CacheService.activate_hibernation(phone)  # grace_minutes default=15
-            return JSONResponse({"status": "human_message_detected_hibernation_activated"})
+                logger.info(f"👨‍💼 Mensagem de humano detectada para {phone}. Ativando modo de hibernação.")
+                # await CacheService.activate_hibernation(phone) # -> Lógica de cache removida
+            return JSONResponse({"status": "human_message_detected"})
 
-        # ----------------------------------------------
-        # Rota 1: Webhook de Qualificação de Lead (Zaia)
-        # ----------------------------------------------
-        if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
+        # Rota 1: Webhook de Qualificação da Zaia
+        elif 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
             if not phone_raw or '{{' in str(phone_raw):
-                error_msg = f"Webhook de qualificação recebido com telefone inválido: {phone_raw}"
-                logger.error(error_msg)
-                return JSONResponse({"status": "invalid_phone_variable", "detail": error_msg}, status_code=400)
-
+                return JSONResponse({"status": "invalid_phone_variable"}, status_code=400)
+            
             phone = re.sub(r'\D', '', str(phone_raw))
             profissao = data.get('profissao')
             motivo = data.get('motivo')
@@ -277,25 +245,19 @@ async def handle_webhook(request: Request):
 
             return JSONResponse({"status": "lead_qualified_processed"})
 
-        # -------------------------------------------------------------------
-        # Rota 2: Mensagem do Cliente da Z-API (lead) - processamento normal
-        # -------------------------------------------------------------------
-        if data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
+        # Rota 2: Mensagem do Cliente da Z-API
+        elif data.get('type') == 'ReceivedCallback':
+            if data.get('isGroup'):
+                return JSONResponse({"status": "group_message_ignored"})
+
             phone_raw = data.get('phone')
             sender_name = data.get('senderName')
             phone = re.sub(r'\D', '', str(phone_raw))
 
-            # BLOQUEIO DE HIBERNAÇÃO + GRACE (12h + 15min)
-            if await CacheService.is_hibernating(phone) or await CacheService.is_recently_hibernated(phone):
-                logger.info(f"🤖 Automação para {phone} em hibernação (ou janela de segurança). Ignorando.")
-                return JSONResponse({"status": "hibernation_mode_active"})
-
-            if data.get('isGroup'):
-                logger.info("Mensagem de grupo recebida. Ignorando.")
-                return JSONResponse({"status": "group_message_ignored"})
+            # if await CacheService.is_hibernating(phone): # -> Lógica de cache removida
+            #     return JSONResponse({"status": "hibernation_mode_active"})
 
             if not phone or not sender_name:
-                logger.warning(f"Dados inválidos após normalização. Original: {phone_raw}")
                 return JSONResponse({"status": "invalid_sender_data"})
 
             logger.info(f"Processando mensagem de {sender_name} ({phone})")
@@ -387,12 +349,11 @@ async def handle_webhook(request: Request):
             await _handle_zaia_response(phone, is_audio, zaia_response)
             return JSONResponse({"status": "message_processed_by_zaia"})
 
-        # ------------------------------------------------
         # Se nenhum webhook corresponder
-        # ------------------------------------------------
-        logger.info("Tipo de webhook não processado.")
-        return JSONResponse({"status": "event_not_handled"})
-
+        else:
+            logger.info("Tipo de webhook não processado.")
+            return JSONResponse({"status": "event_not_handled"})
+        
     except Exception as e:
         error_message = f"Erro fatal no processamento do webhook: {e}"
         logger.error(error_message, exc_info=True)
