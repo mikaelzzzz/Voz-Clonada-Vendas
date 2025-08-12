@@ -7,7 +7,6 @@ pydantic-settings
 openai
 httpx
 cloudinary
-redis
 langdetect
 gunicorn
 aiohttp 
