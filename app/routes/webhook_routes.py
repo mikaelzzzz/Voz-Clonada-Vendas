@@ -230,21 +230,53 @@ async def handle_webhook(request: Request):
                 logger.info(f"Recebida confirmação de nome de {phone}: '{message_text}'")
                 confirmed_name = extract_first_name(message_text)
                 
+                # Atualiza o nome e desmarca a flag
                 notion_service.update_lead_properties(phone, {
                     "Cliente": confirmed_name,
                     "Aguardando Confirmação Nome": False
                 })
                 
-                greeting = f"Perfeito, {confirmed_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em inglês hoje?"
-                await ZAPIService.send_text_with_typing(phone, greeting)
+                # Busca a primeira mensagem que foi salva
+                primeira_mensagem_salva = lead_data.get('properties', {}).get('Primeira Mensagem', '')
+                
+                # Se houver uma pergunta salva, responde a ela
+                if primeira_mensagem_salva and primeira_mensagem_salva.strip():
+                    logger.info(f"Respondendo à primeira pergunta salva: '{primeira_mensagem_salva}'")
+                    
+                    # Constrói o prompt para a Zaia com o nome confirmado e a pergunta original
+                    def build_prompt_after_confirmation(base_message: str) -> str:
+                        lang = detect_language(base_message)
+                        lang_instruction = "Instrução: Responda em inglês." if lang == 'en' else "Instrução: Responda em português."
+                        parts = [lang_instruction, f"Meu nome é {confirmed_name}.", f"Minha pergunta é: {base_message}"]
+                        return " ".join(parts)
+
+                    final_prompt = build_prompt_after_confirmation(primeira_mensagem_salva)
+                    zaia_service = ZaiaService()
+                    zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
+                    await _handle_zaia_response(phone, is_audio, zaia_response) # is_audio pode não ser relevante aqui, mas mantemos
+                    
+                # Se não havia pergunta, apenas envia a saudação
+                else:
+                    greeting = f"Perfeito, {confirmed_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em inglês hoje?"
+                    await ZAPIService.send_text_with_typing(phone, greeting)
+
                 return JSONResponse({"status": "name_confirmation_processed"})
 
             # --- FLUXO DE NOVO LEAD ---
             is_new_lead = not bool(lead_data)
             if is_new_lead:
                 notion_service.create_or_update_lead(sender_name, phone, data.get('photo'))
+                
                 if is_commercial_name(sender_name):
                     logger.info(f"Nome comercial detectado: '{sender_name}'. Solicitando confirmação.")
+                    
+                    # Salva a primeira mensagem se ela não for um simples cumprimento
+                    normalized_message = message_text.strip().lower()
+                    greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+                    english_greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
+                    if not (normalized_message in greetings or normalized_message in english_greetings):
+                        notion_service.update_lead_properties(phone, {"Primeira Mensagem": message_text})
+
                     msg = f"Hello Hello! Vi que seu nome está como '{sender_name}'. Este é o nome do seu negócio? Se sim, como posso te chamar?"
                     await ZAPIService.send_text_with_typing(phone, msg)
                     notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})

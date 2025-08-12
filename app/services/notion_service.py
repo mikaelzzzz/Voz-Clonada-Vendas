@@ -171,7 +171,7 @@ class NotionService:
                 properties[key] = {"url": str(value)}
             elif key == 'Alerta Enviado' or key == 'Aguardando Confirmação Nome':
                 properties[key] = {"checkbox": bool(value)}
-            # Para outros campos, assume rich_text
+            # Para outros campos, assume rich_text (incluindo Primeira Mensagem)
             else:
                 properties[key] = {"rich_text": [{"text": {"content": str(value)}}]}
 
