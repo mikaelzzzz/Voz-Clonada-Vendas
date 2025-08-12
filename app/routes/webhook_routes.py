@@ -260,24 +260,24 @@ async def handle_webhook(request: Request):
                 # Busca a primeira mensagem que foi salva
                 primeira_mensagem_salva = lead_data.get('properties', {}).get('Primeira Mensagem', '')
                 
-                # Se houver uma pergunta salva, responde a ela
+                # Se houver uma pergunta salva, a envia para a Zaia com o novo contexto
                 if primeira_mensagem_salva and primeira_mensagem_salva.strip():
-                    logger.info(f"Respondendo à primeira pergunta salva: '{primeira_mensagem_salva}'")
+                    logger.info(f"Enviando primeira pergunta salva para a Zaia com nome confirmado: '{primeira_mensagem_salva}'")
                     
-                    # Constrói o prompt para a Zaia com o nome confirmado e a pergunta original
-                    def build_prompt_after_confirmation(base_message: str) -> str:
+                    def build_prompt_with_confirmed_name(base_message: str) -> str:
                         lang = detect_language(base_message)
                         lang_instruction = "Instrução: Responda em inglês." if lang == 'en' else "Instrução: Responda em português."
                         parts = [lang_instruction, f"Meu nome é {confirmed_name}.", f"Minha pergunta é: {base_message}"]
                         return " ".join(parts)
 
-                    final_prompt = build_prompt_after_confirmation(primeira_mensagem_salva)
+                    final_prompt = build_prompt_with_confirmed_name(primeira_mensagem_salva)
+                    zaia_service = ZaiaService()
                     zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
-                    await _handle_zaia_response(phone, is_audio, zaia_response) # is_audio pode não ser relevante aqui, mas mantemos
+                    await _handle_zaia_response(phone, is_audio, zaia_response) # is_audio é False aqui, mas mantemos por consistência
                     
-                # Se não havia pergunta, apenas envia a saudação
+                # Se não havia pergunta salva, apenas envia a saudação de agradecimento
                 else:
-                    greeting = f"Perfeito, {confirmed_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em inglês hoje?"
+                    greeting = f"Perfeito, {confirmed_name}! Obrigado por confirmar. Como posso te ajudar com o seu objetivo em inglês hoje?"
                     await ZAPIService.send_text_with_typing(phone, greeting)
 
                 return JSONResponse({"status": "name_confirmation_processed"})
@@ -296,6 +296,9 @@ async def handle_webhook(request: Request):
                 # Cenário 1: Nome puramente comercial
                 if name_type == 'Empresa':
                     logger.info(f"Nome puramente comercial detectado por IA: '{sender_name}'.")
+                    # Salva a primeira mensagem se ela não for um simples cumprimento
+                    if not is_greeting:
+                        notion_service.update_lead_properties(phone, {"Primeira Mensagem": message_text})
                     msg = f"Hello Hello! Vi que seu nome está como '{sender_name}'. Este é o nome do seu negócio? Se sim, como posso te chamar?"
                     await ZAPIService.send_text_with_typing(phone, msg)
                     notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
@@ -304,6 +307,9 @@ async def handle_webhook(request: Request):
                 # Cenário 2: Nome comercial com nome pessoal detectado
                 elif name_type == 'Empresa com nome' and extracted_name:
                     logger.info(f"Nome comercial com nome pessoal '{extracted_name}' detectado em '{sender_name}'.")
+                    # Salva a primeira mensagem se ela não for um simples cumprimento
+                    if not is_greeting:
+                        notion_service.update_lead_properties(phone, {"Primeira Mensagem": message_text})
                     msg = f"Hello Hello, que bom ter você por aqui! Vi que seu nome está como '{sender_name}'. Posso te chamar de {extracted_name} mesmo? Ou como prefere que eu te chame?"
                     await ZAPIService.send_text_with_typing(phone, msg)
                     notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
@@ -311,10 +317,7 @@ async def handle_webhook(request: Request):
 
                 # Cenário 3: Nome é de Pessoa (ou fallback da IA)
                 else: # name_type == 'Pessoa'
-                    # ... (lógica para saudação direta, que já está correta) ...
-                    # A única mudança aqui é garantir que a pergunta original seja tratada, se houver.
-                    first_name = extract_first_name(sender_name)
-                    # ... (código restante para saudar ou responder pergunta direta) ...
+                    # ... (lógica existente que já trata isso corretamente) ...
                     return JSONResponse({"status": "new_lead_processed"})
             
             # --- FLUXO DE LEAD EXISTENTE ---
