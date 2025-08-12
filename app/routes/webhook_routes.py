@@ -277,18 +277,18 @@ async def handle_webhook(request: Request):
 
             return JSONResponse({"status": "lead_qualified_processed"})
 
-        # Rota 2: Mensagem do Cliente da Z-API
+        # Rota 2: Webhook de Mensagem do Cliente da Z-API
         elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
             phone_raw = data.get('phone')
             sender_name = data.get('senderName')
             phone = re.sub(r'\D', '', str(phone_raw))
 
-            # VERIFICAÇÃO DE HIBERNAÇÃO
-            if await CacheService.is_hibernating(phone):
-                logger.info(f"🤖 Automação para {phone} em hibernação. Ignorando mensagem.")
-                return JSONResponse({"status": "hibernation_mode_active"})
-            
+            if data.get('isGroup'):
+                logger.info("Mensagem de grupo recebida. Ignorando.")
+                return JSONResponse({"status": "group_message_ignored"})
+
             if not phone or not sender_name:
+                logger.warning(f"Dados inválidos após normalização. Original: {phone_raw}")
                 return JSONResponse({"status": "invalid_sender_data"})
 
             logger.info(f"Processando mensagem de {sender_name} ({phone})")
