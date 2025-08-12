@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from langdetect import detect, LangDetectException
@@ -11,11 +12,30 @@ from app.services.notion_service import NotionService
 from app.services.openai_service import OpenAIService
 from app.config.settings import Settings
 from app.services.qualification_service import QualificationService
+from app.services.cache_service import CacheService
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# --- Memória de Curto Prazo para Cooldown ---
+# Guarda o timestamp da última mensagem processada por telefone
+_last_message_timestamps = {}
+COOLDOWN_SECONDS = 15 # Ignora mensagens do mesmo número por 15 segundos
+
+def is_on_cooldown(phone: str) -> bool:
+    """Verifica se um telefone está em cooldown na memória local."""
+    last_time = _last_message_timestamps.get(phone)
+    if last_time and (time.time() - last_time) < COOLDOWN_SECONDS:
+        logger.info(f"⏳ Cooldown ATIVO para {phone}. Ignorando mensagem.")
+        return True
+    return False
+
+def set_cooldown(phone: str):
+    """Define o cooldown para um telefone na memória local."""
+    _last_message_timestamps[phone] = time.time()
+    logger.info(f"⏳ Cooldown de {COOLDOWN_SECONDS}s ativado para {phone}.")
 
 def is_commercial_name(name: str) -> bool:
     """
@@ -188,15 +208,28 @@ async def handle_webhook(request: Request):
     logger.info(f"Webhook recebido: {data}")
 
     try:
-        # Rota 0: Mensagem de humano da equipe -> Ativa hibernação
-        if data.get('fromMe', False) and not data.get('isStatusReply', False):
-            phone = re.sub(r'\D', '', str(data.get('phone', '')))
-            if phone:
-                logger.info(f"👨‍💼 Mensagem de humano detectada para {phone}. Ativando modo de hibernação.")
-                # await CacheService.activate_hibernation(phone) # -> Lógica de cache removida
-            return JSONResponse({"status": "human_message_detected"})
+        # Extrai o telefone de forma unificada para verificação de cooldown
+        phone_raw = data.get('phone') or data.get('whatsapp')
+        if not phone_raw:
+            return JSONResponse({"status": "no_phone_found"})
+        
+        phone = re.sub(r'\D', '', str(phone_raw))
+        
+        # VERIFICAÇÃO DE COOLDOWN - A PRIMEIRA COISA A SER FEITA
+        if is_on_cooldown(phone):
+            return JSONResponse({"status": "on_cooldown"})
 
-        # Rota 1: Webhook de Qualificação da Zaia
+        # Se não está em cooldown, ativa-o imediatamente antes de processar
+        set_cooldown(phone)
+
+        # Rota 0: Mensagem de humano da equipe (agora sem hibernação)
+        if data.get('fromMe', False) and not data.get('isStatusReply', False):
+            logger.info(f"👨‍💼 Mensagem de humano detectada para {phone}. Ignorando para não causar loop.")
+            return JSONResponse({"status": "human_message_ignored"})
+
+        # Se não for uma mensagem de humano, continua o fluxo normal
+
+        # Rota 1: Webhook de Qualificação de Lead da Zaia
         elif 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
             if not phone_raw or '{{' in str(phone_raw):
@@ -246,17 +279,16 @@ async def handle_webhook(request: Request):
             return JSONResponse({"status": "lead_qualified_processed"})
 
         # Rota 2: Mensagem do Cliente da Z-API
-        elif data.get('type') == 'ReceivedCallback':
-            if data.get('isGroup'):
-                return JSONResponse({"status": "group_message_ignored"})
-
+        elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
             phone_raw = data.get('phone')
             sender_name = data.get('senderName')
             phone = re.sub(r'\D', '', str(phone_raw))
 
-            # if await CacheService.is_hibernating(phone): # -> Lógica de cache removida
-            #     return JSONResponse({"status": "hibernation_mode_active"})
-
+            # VERIFICAÇÃO DE HIBERNAÇÃO
+            if await CacheService.is_hibernating(phone):
+                logger.info(f"🤖 Automação para {phone} em hibernação. Ignorando mensagem.")
+                return JSONResponse({"status": "hibernation_mode_active"})
+            
             if not phone or not sender_name:
                 return JSONResponse({"status": "invalid_sender_data"})
 
