@@ -157,11 +157,13 @@ class NotionService:
 
         properties = {}
         for key, value in updates.items():
-            if not value:
+            if not value and not isinstance(value, bool): # Permite False para checkboxes
                 continue
             
             # Formatação baseada no nome da propriedade
-            if key == 'Status':
+            if key == 'Cliente':
+                properties[key] = {"title": [{"text": {"content": str(value)}}]}
+            elif key == 'Status':
                 properties[key] = {"status": {"name": str(value)}}
             elif key == 'Nível de Qualificação':
                 properties[key] = {"multi_select": [{"name": str(value)}]}
