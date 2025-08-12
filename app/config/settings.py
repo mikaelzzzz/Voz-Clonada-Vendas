@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     @property
     def is_redis_enabled(self) -> bool:
         return self.REDIS_ENABLED
-
+    
     class Config:
         env_file = ".env"
 

@@ -268,7 +268,7 @@ class ZaiaService:
             url_message = f"{base_url}/v1.1/api/external-generative-message/create"
             logger.info(f"📤 Enviando mensagem para Zaia...")
             logger.info(f"📤 Payload completo: {payload}")
-
+            
             async with aiohttp.ClientSession() as session:
                 async with session.post(url_message, headers=headers, json=payload) as response:
                     logger.info(f"📥 Status: {response.status}")
