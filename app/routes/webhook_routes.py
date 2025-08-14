@@ -209,7 +209,8 @@ async def handle_webhook(request: Request):
 
                 # Verifica o status atual do lead antes de prosseguir
                 lead_current_data = notion_service.get_lead_data_by_phone(phone)
-                current_status = lead_current_data.get('properties', {}).get('Status', '') if lead_current_data else ''
+                current_status = (lead_current_data.get('properties', {}).get('Status') or '') if lead_current_data else ''
+                logger.info(f"VERIFICAÇÃO DE STATUS (Qualificação): Status atual do lead {phone} no Notion é '{current_status}'.")
                 
                 # Lista de status que não devem ser alterados para "Qualificado pela IA"
                 protected_statuses = [
@@ -410,7 +411,8 @@ async def handle_webhook(request: Request):
                 # BUSCA OS DADOS ATUAIS DO LEAD
                 lead_full_data = notion_service.get_lead_data_by_phone(phone)
                 lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
-                current_status = lead_properties.get('Status', '')
+                current_status = (lead_properties.get('Status') or '').strip()
+                logger.info(f"VERIFICAÇÃO DE STATUS (Lead Existente): Status atual do lead {phone} no Notion é '{current_status}'.")
 
                 # LISTA DE STATUS QUE NÃO DEVEM SER PROCESSADOS PELA ZAIA (JÁ AVANÇADOS NO FUNIL)
                 protected_statuses = [
@@ -427,7 +429,7 @@ async def handle_webhook(request: Request):
                     return JSONResponse({"status": "lead_status_protected_message_ignored"})
 
                 # Se for um cumprimento, nosso código responde diretamente
-                normalized_message = message_text.strip().lower()
+                normalized_message = (message_text or '').strip().lower()
                 greetings = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'opa']
 
                 if normalized_message in greetings:
