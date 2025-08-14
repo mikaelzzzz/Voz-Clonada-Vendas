@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import datetime
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from app.services.z_api_service import ZAPIService
@@ -10,6 +11,7 @@ from app.services.notion_service import NotionService
 from app.services.openai_service import OpenAIService
 from app.config.settings import Settings
 from app.services.qualification_service import QualificationService
+from app.services.context_service import ContextService
 from langdetect import detect, LangDetectException
 
 
@@ -426,13 +428,23 @@ async def handle_webhook(request: Request):
                 if normalized_message in greetings:
                     logger.info("Mensagem é um cumprimento. Respondendo diretamente.")
                     response_message = f"Hello Hello, {sender_name}! Como posso te ajudar hoje?"
+                    
+                    # Verifica se deve usar delay de contexto
+                    should_delay = await ContextService.should_use_context_delay(phone)
+                    
                     # Se a mensagem original era áudio, respondemos com áudio
                     if is_audio:
                         elevenlabs_service = ElevenLabsService()
                         audio_bytes = elevenlabs_service.generate_audio(response_message)
-                        await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=response_message)
+                        if should_delay:
+                            await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=response_message)
+                        else:
+                            await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=response_message)
                     else:
-                        await ZAPIService.send_text_with_typing(phone, response_message)
+                        if should_delay:
+                            await ZAPIService.send_text_with_context_delay(phone, response_message)
+                        else:
+                            await ZAPIService.send_text_with_typing(phone, response_message)
                     return JSONResponse({"status": "existing_lead_greeted"})
 
                 # Se for uma pergunta real, enriquecemos o contexto e enviamos para a Zaia
@@ -458,6 +470,9 @@ async def handle_webhook(request: Request):
                 if zaia_response.get('text'):
                     ai_response_text = zaia_response.get('text')
                     
+                    # Verifica se deve usar delay de contexto
+                    should_delay = await ContextService.should_use_context_delay(phone)
+                    
                     # Regex para detectar URLs na resposta da IA
                     url_pattern = r'https?://[^\s]+'
                     contains_link = re.search(url_pattern, ai_response_text)
@@ -472,9 +487,39 @@ async def handle_webhook(request: Request):
                     else:
                         if contains_link:
                             logger.info("Resposta contém um link. Enviando como texto por padrão.")
-                        await ZAPIService.send_text_with_typing(phone, ai_response_text)
+                        if should_delay:
+                            await ZAPIService.send_text_with_context_delay(phone, ai_response_text)
+                        else:
+                            await ZAPIService.send_text_with_typing(phone, ai_response_text)
                 
                 return JSONResponse({"status": "message_processed_by_zaia"})
+
+        # Rota 3: Webhook para marcar mensagens do sistema enviadas por outros códigos
+        elif data.get('type') == 'system_message_sent':
+            phone_raw = data.get('phone')
+            message_type = data.get('message_type', 'system')
+            
+            if not phone_raw:
+                return JSONResponse({"status": "invalid_phone_data"})
+            
+            phone = re.sub(r'\D', '', str(phone_raw))
+            logger.info(f"Marcando mensagem do sistema enviada para {phone}: {message_type}")
+            
+            try:
+                # Marca que uma mensagem do sistema foi enviada
+                await ContextService.mark_system_message_sent(phone, message_type)
+                
+                return JSONResponse({
+                    "status": "system_message_marked",
+                    "phone": phone,
+                    "message_type": message_type,
+                    "timestamp": datetime.now().isoformat()
+                })
+                
+            except Exception as e:
+                error_message = f"Erro ao marcar mensagem do sistema para {phone}: {e}"
+                logger.error(error_message)
+                return JSONResponse({"status": "error", "detail": error_message}, status_code=500)
 
         # Se nenhum webhook corresponder
         else:

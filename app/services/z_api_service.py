@@ -37,6 +37,25 @@ class ZAPIService:
         return max(min_duration, min(calculated_duration, max_duration))
 
     @staticmethod
+    async def send_text_with_context_delay(phone: str, message: str, context_delay: int = 30):
+        """
+        Envia mensagem de texto com delay de contexto para evitar perda de contexto
+        quando mensagens são quebradas ou enviadas por outros sistemas.
+        
+        Args:
+            phone: Número do telefone
+            message: Mensagem a ser enviada
+            context_delay: Delay em segundos antes de enviar (padrão: 30s)
+        """
+        logger.info(f"Enviando mensagem com delay de contexto de {context_delay}s para {phone}")
+        
+        # Aguarda o delay de contexto
+        await asyncio.sleep(context_delay)
+        
+        # Envia a mensagem com delay de digitação normal
+        return await ZAPIService.send_text_with_typing(phone, message)
+
+    @staticmethod
     async def send_text_with_typing(phone: str, message: str):
         """
         Envia mensagem de texto com simulação de digitação usando o delayTyping da Z-API.
