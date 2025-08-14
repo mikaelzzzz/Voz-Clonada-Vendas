@@ -39,11 +39,20 @@ class ZAPIService:
     @staticmethod
     async def send_text_with_context_delay(phone: str, message: str, context_delay: int = 30):
         """
-        Envia mensagem de texto com delay de contexto para evitar perda de contexto
-        quando mensagens são quebradas ou enviadas por outros sistemas.
+        Envia mensagem de texto com delay de contexto para evitar perda de contexto.
+        
+        Este método é crucial para resolver o problema de mensagens quebradas.
+        Quando o cliente envia mensagens em partes (ex: "Viagem" + "Vou pra Inglaterra"),
+        este delay permite que o agente da Zaia processe cada parte adequadamente
+        sem perder o contexto da conversa.
+        
+        Funcionamento:
+        1. Aguarda o delay especificado (padrão: 30 segundos)
+        2. Envia a mensagem com delay de digitação normal
+        3. Preserva o contexto da conversa
         
         Args:
-            phone: Número do telefone
+            phone: Número do telefone (normalizado com 55)
             message: Mensagem a ser enviada
             context_delay: Delay em segundos antes de enviar (padrão: 30s)
         """

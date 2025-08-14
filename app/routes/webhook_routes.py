@@ -429,7 +429,9 @@ async def handle_webhook(request: Request):
                     logger.info("Mensagem é um cumprimento. Respondendo diretamente.")
                     response_message = f"Hello Hello, {sender_name}! Como posso te ajudar hoje?"
                     
-                    # Verifica se deve usar delay de contexto
+                    # ✅ SISTEMA DE CONTEXTO: Verifica se deve usar delay para preservar contexto
+                    # Este delay evita perda de contexto quando mensagens são quebradas
+                    # ou quando o cliente responde rapidamente a mensagens do sistema
                     should_delay = await ContextService.should_use_context_delay(phone)
                     
                     # Se a mensagem original era áudio, respondemos com áudio
@@ -470,7 +472,9 @@ async def handle_webhook(request: Request):
                 if zaia_response.get('text'):
                     ai_response_text = zaia_response.get('text')
                     
-                    # Verifica se deve usar delay de contexto
+                    # ✅ SISTEMA DE CONTEXTO: Verifica se deve usar delay para preservar contexto
+                    # Este delay evita perda de contexto quando mensagens são quebradas
+                    # ou quando o cliente responde rapidamente a mensagens do sistema
                     should_delay = await ContextService.should_use_context_delay(phone)
                     
                     # Regex para detectar URLs na resposta da IA
@@ -494,7 +498,9 @@ async def handle_webhook(request: Request):
                 
                 return JSONResponse({"status": "message_processed_by_zaia"})
 
-        # Rota 3: Webhook para marcar mensagens do sistema enviadas por outros códigos
+        # 🚀 ROTA 3: Webhook para marcar mensagens do sistema enviadas por outros códigos
+        # Esta rota permite que sistemas externos (Cal.com, agendadores, etc.) marquem
+        # quando enviam mensagens automáticas, preservando o contexto na Zaia
         elif data.get('type') == 'system_message_sent':
             phone_raw = data.get('phone')
             message_type = data.get('message_type', 'system')
@@ -506,7 +512,9 @@ async def handle_webhook(request: Request):
             logger.info(f"Marcando mensagem do sistema enviada para {phone}: {message_type}")
             
             try:
-                # Marca que uma mensagem do sistema foi enviada
+                # ✅ SISTEMA DE CONTEXTO: Marca que uma mensagem do sistema foi enviada
+                # Isso permite que a Zaia saiba quando aplicar delay de contexto
+                # para evitar perda de contexto quando o cliente responder
                 await ContextService.mark_system_message_sent(phone, message_type)
                 
                 return JSONResponse({

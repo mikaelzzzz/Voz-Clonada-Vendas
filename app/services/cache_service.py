@@ -1,3 +1,4 @@
+# app/services/cache_service.py
 import logging
 import json
 import asyncio
@@ -9,7 +10,14 @@ logger = logging.getLogger(__name__)
 class CacheService:
     """
     Serviço de cache para armazenar dados de contexto e chat IDs.
-    Por enquanto usa cache em memória, mas pode ser expandido para Redis.
+    
+    Este serviço é fundamental para o sistema de contexto da Zaia, permitindo:
+    - Preservar contexto entre mensagens quebradas
+    - Evitar perda de contexto quando o agente responde
+    - Manter histórico de conversas por telefone
+    
+    Por enquanto usa cache em memória, mas pode ser expandido para Redis
+    para melhor performance e persistência entre reinicializações.
     """
     
     # Cache em memória para dados de contexto
@@ -22,9 +30,13 @@ class CacheService:
         """
         Armazena dados de contexto para um telefone específico.
         
+        Este método é chamado sempre que uma mensagem do sistema é enviada,
+        permitindo que o agente da Zaia saiba quando foi a última vez que
+        uma mensagem automática foi enviada para preservar contexto.
+        
         Args:
-            phone: Número do telefone
-            context_data: Dados do contexto
+            phone: Número do telefone (normalizado com 55)
+            context_data: Dados do contexto incluindo timestamp e tipo de mensagem
         """
         CacheService._context_cache[phone] = context_data
         logger.info(f"💾 Contexto armazenado para {phone}")
@@ -34,11 +46,14 @@ class CacheService:
         """
         Obtém dados de contexto para um telefone específico.
         
+        Este método é usado para verificar se deve aplicar delay de contexto
+        quando o cliente responde a uma mensagem do sistema.
+        
         Args:
-            phone: Número do telefone
+            phone: Número do telefone (normalizado com 55)
             
         Returns:
-            dict: Dados do contexto ou None se não existir
+            dict: Dados do contexto com timestamp e tipo de mensagem, ou None se não existir
         """
         return CacheService._context_cache.get(phone)
     
@@ -63,7 +78,7 @@ class CacheService:
             chat_id: ID do chat
         """
         CacheService._chat_cache[phone] = chat_id
-        logger.info(f"💾 Chat ID armazenado para {phone}: {chat_id}")
+        logger.info(f"�� Chat ID armazenado para {phone}: {chat_id}")
     
     @staticmethod
     async def get_chat_id(phone: str) -> Optional[str]:
@@ -87,7 +102,7 @@ class CacheService:
             phone: Número do telefone
         """
         CacheService._chat_cache.pop(phone, None)
-        logger.info(f"🧹 Chat ID limpo para {phone}")
+        logger.info(f"�� Chat ID limpo para {phone}")
     
     @staticmethod
     async def clear_all_chats():
