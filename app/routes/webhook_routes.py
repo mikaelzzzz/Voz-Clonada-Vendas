@@ -222,7 +222,7 @@ async def handle_webhook(request: Request):
                 ]
                 
                 # Se o lead já tem um status protegido, não altera o status
-                if current_status in protected_statuses:
+                if current_status.lower() in [s.lower() for s in protected_statuses]:
                     logger.info(f"Lead {phone} já tem status '{current_status}'. Não alterando status, apenas atualizando informações de qualificação.")
                     
                     # Atualiza apenas as informações de qualificação, sem alterar o status
@@ -424,8 +424,11 @@ async def handle_webhook(request: Request):
                 ]
 
                 # SE O STATUS FOR PROTEGIDO, APENAS IGNORA A MENSAGEM OU RESPONDE GENERICAMENTE
-                if current_status in protected_statuses:
+                if current_status.lower() in [s.lower() for s in protected_statuses]:
                     logger.info(f"Lead com status '{current_status}'. Nenhuma ação será tomada para a mensagem: '{message_text}'")
+                    # OPCIONAL: Enviar uma resposta genérica se necessário
+                    # generic_response = "Recebi sua mensagem! Em breve nossa equipe entrará em contato."
+                    # await ZAPIService.send_text_with_typing(phone, generic_response)
                     return JSONResponse({"status": "lead_status_protected_message_ignored"})
 
                 # Se for um cumprimento, nosso código responde diretamente
