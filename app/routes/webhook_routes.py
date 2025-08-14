@@ -199,11 +199,38 @@ async def handle_webhook(request: Request):
                 qualification_service = QualificationService()
                 settings = Settings()
 
-                # 1. Classifica o lead
+                # 1. Classifica o lead primeiro
                 qualification_level = await qualification_service.classify_lead(motivo, profissao)
                 logger.info(f"Lead {phone} classificado como: {qualification_level}")
 
-                # 2. Atualiza o Notion com todas as informações
+                # Verifica o status atual do lead antes de prosseguir
+                lead_current_data = notion_service.get_lead_data_by_phone(phone)
+                current_status = lead_current_data.get('properties', {}).get('Status', '') if lead_current_data else ''
+                
+                # Lista de status que não devem ser alterados para "Qualificado pela IA"
+                protected_statuses = [
+                    "Agendado Reunião",
+                    "Reunião Realizada",
+                    "Fechado",
+                    "Perdido",
+                    "Convertido"
+                ]
+                
+                # Se o lead já tem um status protegido, não altera o status
+                if current_status in protected_statuses:
+                    logger.info(f"Lead {phone} já tem status '{current_status}'. Não alterando status, apenas atualizando informações de qualificação.")
+                    
+                    # Atualiza apenas as informações de qualificação, sem alterar o status
+                    updates = {
+                        "Profissão": profissao,
+                        "Real Motivação": motivo,
+                        "Nível de Qualificação": qualification_level
+                    }
+                    notion_service.update_lead_properties(phone, updates)
+                    
+                    return JSONResponse({"status": "lead_status_protected", "message": f"Lead com status '{current_status}', status não alterado"})
+
+                # 2. Atualiza o Notion com todas as informações (incluindo mudança de status)
                 updates = {
                     "Profissão": profissao,
                     "Real Motivação": motivo,
