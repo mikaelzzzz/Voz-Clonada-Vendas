@@ -172,6 +172,8 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
         else:
             if contains_link:
                 logger.info("Resposta contém um link. Enviando como texto por padrão.")
+            
+            # A verificação de delay de contexto foi movida para o fluxo principal
             await ZAPIService.send_text_with_typing(phone, ai_response_text)
 
 @router.post("")
@@ -403,57 +405,40 @@ async def handle_webhook(request: Request):
             
             # --- FLUXO DE LEAD EXISTENTE ---
             else:
-                # Se for um novo lead, nossa aplicação envia a primeira saudação
-                if is_new_lead:
-                    logger.info(f"Novo lead detectado ({phone}). Enviando saudação personalizada diretamente.")
-                    greeting_message = f"Olá, {sender_name}! Que bom ter você por aqui. Como posso ajudar hoje?"
-                    await ZAPIService.send_text_with_typing(phone, greeting_message)
-                    return JSONResponse({"status": "new_lead_greeted"})
-
-                # Se não for novo, o tratamento inteligente começa aqui
                 logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
+                
+                # BUSCA OS DADOS ATUAIS DO LEAD
+                lead_full_data = notion_service.get_lead_data_by_phone(phone)
+                lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
+                current_status = lead_properties.get('Status', '')
 
-                message_text = ""
-                is_audio = 'audio' in data and data.get('audio')
-                if is_audio:
-                    whisper_service = WhisperService()
-                    message_text = await whisper_service.transcribe_audio(data['audio']['audioUrl'])
-                elif 'text' in data and data.get('text'):
-                    message_text = data['text'].get('message', '')
+                # LISTA DE STATUS QUE NÃO DEVEM SER PROCESSADOS PELA ZAIA (JÁ AVANÇADOS NO FUNIL)
+                protected_statuses = [
+                    "Agendado Reunião",
+                    "Reunião Realizada",
+                    "Fechado",
+                    "Perdido",
+                    "Convertido"
+                ]
 
+                # SE O STATUS FOR PROTEGIDO, APENAS IGNORA A MENSAGEM OU RESPONDE GENERICAMENTE
+                if current_status in protected_statuses:
+                    logger.info(f"Lead com status '{current_status}'. Nenhuma ação será tomada para a mensagem: '{message_text}'")
+                    return JSONResponse({"status": "lead_status_protected_message_ignored"})
+
+                # Se for um cumprimento, nosso código responde diretamente
                 normalized_message = message_text.strip().lower()
                 greetings = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'opa']
 
-                # Se for um simples cumprimento, nosso código responde diretamente
                 if normalized_message in greetings:
                     logger.info("Mensagem é um cumprimento. Respondendo diretamente.")
                     response_message = f"Hello Hello, {sender_name}! Como posso te ajudar hoje?"
-                    
-                    # ✅ SISTEMA DE CONTEXTO: Verifica se deve usar delay para preservar contexto
-                    # Este delay evita perda de contexto quando mensagens são quebradas
-                    # ou quando o cliente responde rapidamente a mensagens do sistema
-                    should_delay = await ContextService.should_use_context_delay(phone)
-                    
-                    # Se a mensagem original era áudio, respondemos com áudio
-                    if is_audio:
-                        elevenlabs_service = ElevenLabsService()
-                        audio_bytes = elevenlabs_service.generate_audio(response_message)
-                        if should_delay:
-                            await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=response_message)
-                        else:
-                            await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=response_message)
-                    else:
-                        if should_delay:
-                            await ZAPIService.send_text_with_context_delay(phone, response_message)
-                        else:
-                            await ZAPIService.send_text_with_typing(phone, response_message)
+                    await ZAPIService.send_text_with_typing(phone, response_message)
                     return JSONResponse({"status": "existing_lead_greeted"})
 
                 # Se for uma pergunta real, enriquecemos o contexto e enviamos para a Zaia
                 logger.info("Mensagem é uma pergunta. Enviando para a Zaia com contexto.")
-                lead_full_data = notion_service.get_lead_data_by_phone(phone)
-                lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
-
+                
                 # Constrói o prompt final para a Zaia
                 def build_final_prompt(base_message: str) -> str:
                     client_name = lead_properties.get('Cliente', 'cliente')
@@ -469,32 +454,7 @@ async def handle_webhook(request: Request):
                 zaia_service = ZaiaService()
                 zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
                 
-                if zaia_response.get('text'):
-                    ai_response_text = zaia_response.get('text')
-                    
-                    # ✅ SISTEMA DE CONTEXTO: Verifica se deve usar delay para preservar contexto
-                    # Este delay evita perda de contexto quando mensagens são quebradas
-                    # ou quando o cliente responde rapidamente a mensagens do sistema
-                    should_delay = await ContextService.should_use_context_delay(phone)
-                    
-                    # Regex para detectar URLs na resposta da IA
-                    url_pattern = r'https?://[^\s]+'
-                    contains_link = re.search(url_pattern, ai_response_text)
-
-                    # Se a mensagem original era áudio E a resposta NÃO contém link, envia áudio
-                    if is_audio and not contains_link:
-                        logger.info("Resposta para áudio sem link. Gerando áudio.")
-                        elevenlabs_service = ElevenLabsService()
-                        audio_bytes = elevenlabs_service.generate_audio(ai_response_text)
-                        await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=ai_response_text)
-                    # Em todos os outros casos (resposta de texto, ou resposta com link), envia texto
-                    else:
-                        if contains_link:
-                            logger.info("Resposta contém um link. Enviando como texto por padrão.")
-                        if should_delay:
-                            await ZAPIService.send_text_with_context_delay(phone, ai_response_text)
-                        else:
-                            await ZAPIService.send_text_with_typing(phone, ai_response_text)
+                await _handle_zaia_response(phone, is_audio, zaia_response)
                 
                 return JSONResponse({"status": "message_processed_by_zaia"})
 
