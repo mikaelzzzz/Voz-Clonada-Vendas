@@ -48,6 +48,26 @@ class NotionService:
                 data[name] = prop['email']
             elif prop_type == 'checkbox':
                 data[name] = prop.get('checkbox', False)
+            elif prop_type == 'status' and prop.get('status'):
+                # Propriedade do tipo Status (novo Notion). Ex.: { status: { name: "Agendado Reunião" } }
+                status_obj = prop.get('status') or {}
+                status_name = status_obj.get('name')
+                if status_name:
+                    data[name] = status_name
+            elif prop_type == 'select' and prop.get('select'):
+                # Fallback para bancos que usam select em vez de status
+                select_obj = prop.get('select') or {}
+                select_name = select_obj.get('name')
+                if select_name:
+                    data[name] = select_name
+            elif prop_type == 'multi_select' and prop.get('multi_select'):
+                # Mantém como lista de nomes
+                options = prop.get('multi_select') or []
+                data[name] = [opt.get('name') for opt in options if opt.get('name')]
+            elif prop_type == 'url' and prop.get('url'):
+                data[name] = prop.get('url')
+            elif prop_type == 'phone_number' and prop.get('phone_number'):
+                data[name] = prop.get('phone_number')
             # Adicione outros tipos se necessário
         return data
 
