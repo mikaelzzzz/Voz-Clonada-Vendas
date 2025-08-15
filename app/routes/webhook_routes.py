@@ -182,16 +182,8 @@ async def handle_webhook(request: Request):
     logger.info(f"--- NOVO WEBHOOK RECEBIDO ---\n{data}")
 
     try:
-        # Rota 0: Mensagem enviada por um humano da equipe (hibernação)
-        if data.get('fromMe', False) and not data.get('isStatusReply', False):
-            phone = re.sub(r'\D', '', str(data.get('phone', '')))
-            if phone:
-                # Lógica de hibernação foi removida, apenas ignoramos
-                logger.info(f"👨‍💼 Mensagem de humano detectada para {phone}. Ignorando.")
-            return JSONResponse({"status": "human_message_ignored"})
-
         # Rota 1: Webhook de Qualificação da Zaia
-        elif 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
+        if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
             if not phone_raw or '{{' in str(phone_raw):
                 return JSONResponse({"status": "invalid_phone_variable"}, status_code=400)
@@ -242,10 +234,7 @@ async def handle_webhook(request: Request):
             return JSONResponse({"status": "lead_qualified_processed"})
 
         # Rota 2: Mensagem do Cliente da Z-API
-        elif data.get('type') == 'ReceivedCallback':
-            if data.get('isGroup'):
-                return JSONResponse({"status": "group_message_ignored"})
-
+        elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
             phone_raw = data.get('phone')
             sender_name = data.get('senderName')
             phone = re.sub(r'\D', '', str(phone_raw))
@@ -254,7 +243,7 @@ async def handle_webhook(request: Request):
                 return JSONResponse({"status": "invalid_sender_data"})
 
             logger.info(f"Processando mensagem de '{sender_name}' ({phone})")
-
+            
             message_text = ""
             is_audio = 'audio' in data and data.get('audio')
             if is_audio:
@@ -269,34 +258,53 @@ async def handle_webhook(request: Request):
                 # Lógica de confirmação de nome
                 # ...
                 return JSONResponse({"status": "name_confirmation_processed"})
-            
-            is_new_lead = not bool(lead_data)
-            if is_new_lead:
-                # Lógica de novo lead
-                # ...
-                return JSONResponse({"status": "new_lead_processed"})
             else:
-                # Lógica de lead existente
-                # ...
-                return JSONResponse({"status": "existing_lead_processed"})
+                is_new_lead = not bool(lead_data)
+                if is_new_lead:
+                    notion_service.create_or_update_lead(sender_name, phone, data.get('photo'))
+                    first_name = extract_first_name(sender_name)
+                    
+                    # Verifica se a mensagem é um cumprimento
+                    normalized_message = message_text.lower().strip()
+                    greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+                    
+                    if normalized_message in greetings:
+                        logger.info("Novo lead enviou cumprimento. Enviando saudação.")
+                        greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
+                        await ZAPIService.send_text_with_typing(phone, greeting_message)
+                        return JSONResponse({"status": "new_lead_greeted"})
+                    else:
+                        # Se já fez uma pergunta direta, responde com a Zaia
+                        # ... (código existente)
+                        pass
+                else:
+                    # Lead existente
+                    logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
+                    
+                    # Se for um cumprimento, nosso código responde diretamente
+                    normalized_message = message_text.lower().strip()
+                    greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
 
-        # Rota 3: Mensagem do sistema (para contexto)
-        elif data.get('type') == 'system_message_sent':
-            phone = re.sub(r'\D', '', str(data.get('phone', '')))
-            message_type = data.get('message_type', 'system')
-            if phone:
-                # await ContextService.mark_system_message_sent(phone, message_type) # Lógica de cache removida
-                logger.info(f"Marcação de mensagem do sistema recebida para {phone}.")
-            return JSONResponse({"status": "system_message_marked"})
-
+                    if normalized_message in greetings:
+                        logger.info("Mensagem é um cumprimento. Respondendo diretamente.")
+                        first_name = extract_first_name(sender_name)
+                        response_message = f"Hello Hello, {first_name}! Como posso te ajudar hoje?"
+                        await ZAPIService.send_text_with_typing(phone, response_message)
+                        return JSONResponse({"status": "existing_lead_greeted"})
+                    else:
+                        # Se for uma pergunta real, enriquecemos o contexto e enviamos para a Zaia
+                        # ... (código existente)
+                        pass
+        
         # Se nenhum webhook corresponder
         else:
             logger.info("Tipo de webhook não processado.")
             return JSONResponse({"status": "event_not_handled"})
-        
+            
     except Exception as e:
-        error_message = f"Erro fatal no processamento do webhook: {e}"
-        logger.error(error_message, exc_info=True)
-        phone_for_log = data.get('phone') or data.get('whatsapp') or 'não identificado'
-        print(f"[WEBHOOK_ERROR] Erro ao processar mensagem de {phone_for_log}: {error_message}")
-        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500) 
+        error_message = f"Erro ao processar webhook: {e}"
+        logger.error(error_message)
+        print(f"[WEBHOOK_ERROR] {error_message}")
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
+    
+    return JSONResponse({"status": "ok"}) 
