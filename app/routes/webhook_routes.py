@@ -182,21 +182,19 @@ async def handle_webhook(request: Request):
     logger.info(f"--- NOVO WEBHOOK RECEBIDO ---\n{data}")
 
     try:
-        # Rota 1: Webhook de Qualificação da Zaia
+        # Rota 1: Webhook de Qualificação de Lead da Zaia
         if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
-
-            # Validação para garantir que a variável da Zaia foi substituída
             if not phone_raw or '{{' in str(phone_raw):
                 error_msg = f"Webhook de qualificação recebido com telefone inválido: {phone_raw}"
                 logger.error(error_msg)
                 return JSONResponse({"status": "invalid_phone_variable", "detail": error_msg}, status_code=400)
 
-            phone = re.sub(r'\D', '', str(phone_raw)) # Normaliza o número, mantendo apenas dígitos
+            phone = re.sub(r'\D', '', str(phone_raw))
             profissao = data.get('profissao')
             motivo = data.get('motivo')
             logger.info(f"Processando qualificação de lead para {phone} (original: {phone_raw})")
-
+            
             try:
                 notion_service = NotionService()
                 openai_service = OpenAIService()
@@ -281,7 +279,7 @@ async def handle_webhook(request: Request):
                 error_message = f"Erro ao processar qualificação de lead para {phone}: {e}"
                 logger.error(error_message)
                 print(f"[WEBHOOK_ERROR] {error_message}")
-                return JSONResponse({"status": "error", "detail": error_message}, status_code=500)
+                return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
         # Rota 2: Mensagem do Cliente da Z-API
         elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
