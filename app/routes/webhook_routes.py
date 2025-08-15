@@ -182,9 +182,10 @@ async def handle_webhook(request: Request):
     logger.info(f"--- NOVO WEBHOOK RECEBIDO ---\n{data}")
 
     try:
-        # Rota 1: Webhook de Qualificação de Lead da Zaia
+        # Rota 1: Webhook de Qualificação da Zaia
         if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
+
             if not phone_raw or '{{' in str(phone_raw):
                 error_msg = f"Webhook de qualificação recebido com telefone inválido: {phone_raw}"
                 logger.error(error_msg)
@@ -194,92 +195,85 @@ async def handle_webhook(request: Request):
             profissao = data.get('profissao')
             motivo = data.get('motivo')
             logger.info(f"Processando qualificação de lead para {phone} (original: {phone_raw})")
+
+            notion_service = NotionService()
+            openai_service = OpenAIService()
+            qualification_service = QualificationService()
+            settings = Settings()
             
-            try:
-                notion_service = NotionService()
-                openai_service = OpenAIService()
-                qualification_service = QualificationService()
-                settings = Settings()
+            # 1. Classifica o lead primeiro
+            qualification_level = await qualification_service.classify_lead(motivo, profissao)
+            logger.info(f"Lead {phone} classificado como: {qualification_level}")
 
-                # 1. Classifica o lead primeiro
-                qualification_level = await qualification_service.classify_lead(motivo, profissao)
-                logger.info(f"Lead {phone} classificado como: {qualification_level}")
-
-                # Verifica o status atual do lead antes de prosseguir
-                lead_current_data = notion_service.get_lead_data_by_phone(phone)
-                current_status = (lead_current_data.get('properties', {}).get('Status') or '') if lead_current_data else ''
-                logger.info(f"VERIFICAÇÃO DE STATUS (Qualificação): Status atual do lead {phone} no Notion é '{current_status}'.")
+            # Verifica o status atual do lead antes de prosseguir
+            lead_current_data = notion_service.get_lead_data_by_phone(phone)
+            current_status = (lead_current_data.get('properties', {}).get('Status') or '') if lead_current_data else ''
+            logger.info(f"VERIFICAÇÃO DE STATUS (Qualificação): Status atual do lead {phone} no Notion é '{current_status}'.")
+            
+            # Lista de status que não devem ser alterados para "Qualificado pela IA"
+            protected_statuses = [
+                "Agendado Reunião",
+                "Reunião Realizada",
+                "Fechado",
+                "Perdido",
+                "Convertido"
+            ]
+            
+            # Se o lead já tem um status protegido, não altera o status
+            if current_status.lower() in [s.lower() for s in protected_statuses]:
+                logger.info(f"Lead {phone} já tem status '{current_status}'. Não alterando status, apenas atualizando informações de qualificação.")
                 
-                # Lista de status que não devem ser alterados para "Qualificado pela IA"
-                protected_statuses = [
-                    "Agendado Reunião",
-                    "Reunião Realizada",
-                    "Fechado",
-                    "Perdido",
-                    "Convertido"
-                ]
-                
-                # Se o lead já tem um status protegido, não altera o status
-                if current_status.lower() in [s.lower() for s in protected_statuses]:
-                    logger.info(f"Lead {phone} já tem status '{current_status}'. Não alterando status, apenas atualizando informações de qualificação.")
-                    
-                    # Atualiza apenas as informações de qualificação, sem alterar o status
-                    updates = {
-                        "Profissão": profissao,
-                        "Real Motivação": motivo,
-                        "Nível de Qualificação": qualification_level
-                    }
-                    notion_service.update_lead_properties(phone, updates)
-                    
-                    return JSONResponse({"status": "lead_status_protected", "message": f"Lead com status '{current_status}', status não alterado"})
-
-                # 2. Atualiza o Notion com todas as informações (incluindo mudança de status)
+                # Atualiza apenas as informações de qualificação, sem alterar o status
                 updates = {
                     "Profissão": profissao,
                     "Real Motivação": motivo,
-                    "Status": "Qualificado pela IA",
                     "Nível de Qualificação": qualification_level
                 }
                 notion_service.update_lead_properties(phone, updates)
                 
-                # Busca os dados completos do lead para tomar a decisão
-                lead_full_data = notion_service.get_lead_data_by_phone(phone)
-                lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
-                alerta_enviado = lead_properties.get('Alerta Enviado', False)
+                return JSONResponse({"status": "lead_status_protected", "message": f"Lead com status '{current_status}', status não alterado"})
 
-                # 3. Se for de alta prioridade E o alerta ainda não foi enviado, gera e envia a análise
-                if qualification_level == 'Alto' and not alerta_enviado:
-                    logger.info(f"Lead {phone} é de alta prioridade e o alerta ainda não foi enviado. Notificando a equipe.")
-                    
-                    # Gera o resumo de texto com a IA
-                    summary_text = await openai_service.generate_sales_summary(lead_properties)
-                    
-                    notion_url = lead_full_data.get('url', 'URL do Notion não encontrada.')
-                    final_message = (
-                        f"{summary_text}\n\n"
-                        f"🔗 *Link do Notion:* {notion_url}\n"
-                        f"📱 *WhatsApp do Lead:* https://wa.me/{phone}"
-                    )
+            # 2. Atualiza o Notion com todas as informações (incluindo mudança de status)
+            updates = {
+                "Profissão": profissao,
+                "Real Motivação": motivo,
+                "Status": "Qualificado pela IA",
+                "Nível de Qualificação": qualification_level
+            }
+            notion_service.update_lead_properties(phone, updates)
+            
+            # Busca os dados completos do lead para tomar a decisão
+            lead_full_data = notion_service.get_lead_data_by_phone(phone)
+            lead_properties = lead_full_data.get('properties', {}) if lead_full_data else {}
+            alerta_enviado = lead_properties.get('Alerta Enviado', False)
 
-                    for sales_phone in settings.SALES_TEAM_PHONES:
-                        await ZAPIService.send_text(sales_phone, final_message)
-                    
-                    # Marca que o alerta foi enviado para não repetir
-                    notion_service.update_lead_properties(phone, {"Alerta Enviado": True})
-                    logger.info(f"Alerta de vendas para o lead {phone} enviado e marcado como concluído.")
+            # 3. Se for de alta prioridade E o alerta ainda não foi enviado, gera e envia a análise
+            if qualification_level == 'Alto' and not alerta_enviado:
+                logger.info(f"Lead {phone} é de alta prioridade e o alerta ainda não foi enviado. Notificando a equipe.")
+                
+                # Gera o resumo de texto com a IA
+                summary_text = await openai_service.generate_sales_summary(lead_properties)
+                
+                notion_url = lead_full_data.get('url', 'URL do Notion não encontrada.')
+                final_message = (
+                    f"{summary_text}\n\n"
+                    f"🔗 *Link do Notion:* {notion_url}\n"
+                    f"📱 *WhatsApp do Lead:* https://wa.me/{phone}"
+                )
 
-                elif alerta_enviado:
-                    logger.info(f"Alerta para o lead {phone} já foi enviado anteriormente. Ignorando.")
-                else: # Lead de baixa prioridade
-                    logger.info(f"Lead {phone} é de baixa prioridade. Nenhuma notificação de vendas será enviada.")
+                for sales_phone in settings.SALES_TEAM_PHONES:
+                    await ZAPIService.send_text(sales_phone, final_message)
+                
+                # Marca que o alerta foi enviado para não repetir
+                notion_service.update_lead_properties(phone, {"Alerta Enviado": True})
+                logger.info(f"Alerta de vendas para o lead {phone} enviado e marcado como concluído.")
 
-                return JSONResponse({"status": "lead_qualified_processed"})
-                        
-                except Exception as e:
-                error_message = f"Erro ao processar qualificação de lead para {phone}: {e}"
-                logger.error(error_message)
-                print(f"[WEBHOOK_ERROR] {error_message}")
-                return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
+            elif alerta_enviado:
+                logger.info(f"Alerta para o lead {phone} já foi enviado anteriormente. Ignorando.")
+            else: # Lead de baixa prioridade
+                logger.info(f"Lead {phone} é de baixa prioridade. Nenhuma notificação de vendas será enviada.")
+
+            return JSONResponse({"status": "lead_qualified_processed"})
 
         # Rota 2: Mensagem do Cliente da Z-API
         elif data.get('type') == 'ReceivedCallback' and not data.get('fromMe', False):
@@ -432,7 +426,7 @@ async def handle_webhook(request: Request):
                         return JSONResponse({"status": "new_lead_direct_question_processed"})
 
             # --- FLUXO DE LEAD EXISTENTE ---
-                    else:
+            else:
                 logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
                 
                 # BUSCA OS DADOS ATUAIS DO LEAD
@@ -483,7 +477,7 @@ async def handle_webhook(request: Request):
                 
                 final_prompt = build_final_prompt(message_text)
 
-                    zaia_service = ZaiaService()
+                zaia_service = ZaiaService()
                 zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
                 
                 await _handle_zaia_response(phone, is_audio, zaia_response)
@@ -517,9 +511,9 @@ async def handle_webhook(request: Request):
                 })
         
     except Exception as e:
-                error_message = f"Erro ao marcar mensagem do sistema para {phone}: {e}"
-                logger.error(error_message)
-                return JSONResponse({"status": "error", "detail": error_message}, status_code=500)
+        error_message = f"Erro ao marcar mensagem do sistema para {phone}: {e}"
+        logger.error(error_message)
+        return JSONResponse({"status": "error", "detail": error_message}, status_code=500)
 
         # Se nenhum webhook corresponder
         else:
