@@ -276,8 +276,8 @@ async def handle_webhook(request: Request):
                     logger.info(f"Lead {phone} é de baixa prioridade. Nenhuma notificação de vendas será enviada.")
 
                 return JSONResponse({"status": "lead_qualified_processed"})
-
-            except Exception as e:
+                        
+                except Exception as e:
                 error_message = f"Erro ao processar qualificação de lead para {phone}: {e}"
                 logger.error(error_message)
                 print(f"[WEBHOOK_ERROR] {error_message}")
@@ -304,7 +304,7 @@ async def handle_webhook(request: Request):
             # Instancia os serviços que serão usados em múltiplos fluxos
             notion_service = NotionService()
             zaia_service = ZaiaService()
-            whisper_service = WhisperService()
+                    whisper_service = WhisperService()
 
             # --- FLUXO DE CONFIRMAÇÃO DE NOME ---
             lead_data = notion_service.get_lead_data_by_phone(phone)
@@ -401,11 +401,40 @@ async def handle_webhook(request: Request):
 
                 # Cenário 3: Nome é de Pessoa (ou fallback da IA)
                 else: # name_type == 'Pessoa'
-                    # ... (lógica existente que já trata isso corretamente) ...
-                    return JSONResponse({"status": "new_lead_processed"})
-            
+                    first_name = extract_first_name(sender_name)
+                    
+                    # Verifica se a mensagem é um cumprimento para decidir a ação
+                    normalized_message = message_text.strip().lower()
+                    greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+                    english_greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']
+                    is_greeting = normalized_message in greetings or normalized_message in english_greetings
+                    lang = detect_language(message_text)
+
+                    # Se for apenas um cumprimento, ou a pergunta for muito curta, envia a saudação padrão
+                    if is_greeting or len(message_text.split()) < 3:
+                        logger.info(f"Novo lead ({first_name}) enviou cumprimento ou mensagem curta. Enviando saudação.")
+                        greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
+                        if lang == 'en':
+                            greeting_message = f"Hello Hello, {first_name}! It's great to have you here. How can I help you with your English goal today?"
+                        await ZAPIService.send_text_with_typing(phone, greeting_message)
+                        return JSONResponse({"status": "new_lead_greeted"})
+                    
+                    # Se já fez uma pergunta direta e substancial, responde diretamente com a Zaia
+                    else:
+                        logger.info(f"Novo lead ({first_name}) já fez pergunta direta. Respondendo com contexto.")
+                        def build_new_lead_prompt(base_message: str, detected_lang: str) -> str:
+                            lang_instruction = "Instrução: Responda em inglês." if detected_lang == 'en' else "Instrução: Responda em português."
+                            parts = [lang_instruction, f"Meu nome é {first_name}.", f"Minha pergunta é: {base_message}"]
+                            return " ".join(parts)
+                        
+                        final_prompt = build_new_lead_prompt(message_text, lang)
+                        zaia_service = ZaiaService()
+                        zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
+                        await _handle_zaia_response(phone, is_audio, zaia_response)
+                        return JSONResponse({"status": "new_lead_direct_question_processed"})
+
             # --- FLUXO DE LEAD EXISTENTE ---
-            else:
+                    else:
                 logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
                 
                 # BUSCA OS DADOS ATUAIS DO LEAD
@@ -456,7 +485,7 @@ async def handle_webhook(request: Request):
                 
                 final_prompt = build_final_prompt(message_text)
 
-                zaia_service = ZaiaService()
+                    zaia_service = ZaiaService()
                 zaia_response = await zaia_service.send_message({'text': final_prompt, 'phone': phone})
                 
                 await _handle_zaia_response(phone, is_audio, zaia_response)
@@ -488,8 +517,8 @@ async def handle_webhook(request: Request):
                     "message_type": message_type,
                     "timestamp": datetime.now().isoformat()
                 })
-                
-            except Exception as e:
+        
+    except Exception as e:
                 error_message = f"Erro ao marcar mensagem do sistema para {phone}: {e}"
                 logger.error(error_message)
                 return JSONResponse({"status": "error", "detail": error_message}, status_code=500)
@@ -498,7 +527,7 @@ async def handle_webhook(request: Request):
         else:
             logger.info("Tipo de webhook não processado.")
             return JSONResponse({"status": "event_not_handled"})
-
+        
     except Exception as e:
         error_message = f"Erro ao processar webhook: {e}"
         logger.error(error_message)
