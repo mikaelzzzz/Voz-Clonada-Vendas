@@ -524,4 +524,4 @@ async def handle_webhook(request: Request):
         error_message = f"Erro ao processar webhook: {e}"
         logger.error(error_message)
         print(f"[WEBHOOK_ERROR] {error_message}")
-        return JSONResponse({"status": "error", "detail": error_message}, status_code=500) 
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500) 
