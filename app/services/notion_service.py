@@ -120,20 +120,19 @@ class NotionService:
             "Link Rápido WhatsApp": {"url": f"https://wa.me/{phone}"}
         }
 
-        # Monta o payload da capa se a URL da foto existir
-        payload_updates = {"properties": properties}
+        # Monta o payload completo, incluindo a capa se a URL da foto existir
+        payload = {"properties": properties}
         if photo_url:
-            payload_updates["cover"] = {
+            payload["cover"] = {
                 "type": "external",
                 "external": {"url": photo_url}
             }
 
         if page_id:
-            logger.info(f"Lead com telefone {phone} já existe (Page ID: {page_id}). Atualizando...")
+            logger.info(f"Lead com telefone {phone} já existe. Atualizando dados básicos e foto.")
             update_url = f"{self.api_url}/pages/{page_id}"
-            
             try:
-                response = requests.patch(update_url, headers=self.headers, json=payload_updates)
+                response = requests.patch(update_url, headers=self.headers, json=payload)
                 response.raise_for_status()
                 logger.info(f"Página do lead {phone} atualizada com sucesso.")
             except Exception as e:
@@ -141,15 +140,14 @@ class NotionService:
                 logger.error(error_message)
                 print(f"[NOTION_SERVICE_ERROR] {error_message}")
         else:
-            logger.info(f"Criando novo lead no Notion para {phone}...")
+            logger.info(f"Criando novo lead no Notion para {phone} com dados básicos e foto.")
             create_url = f"{self.api_url}/pages"
             
             # Adiciona a relação de 'parent' apenas na criação
             full_payload = {
                 "parent": {"database_id": self.database_id},
-                **payload_updates
+                **payload
             }
-
             try:
                 response = requests.post(create_url, headers=self.headers, json=full_payload)
                 response.raise_for_status()
