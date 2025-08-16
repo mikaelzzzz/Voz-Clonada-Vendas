@@ -372,7 +372,7 @@ async def handle_webhook(request: Request):
                             notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
                             ask_msg = (
                                 f"Hello Hello, que bom ter você por aqui! Vi aqui que seu nome está como \"{sender_name}\". "
-                                "Como posso te chamar? Me diga apenas o seu primeiro nome."
+                                "Como prefere que eu te chame?"
                             )
                             await ZAPIService.send_text_with_typing(phone, ask_msg)
                             return JSONResponse({"status": "asked_for_first_name"})
