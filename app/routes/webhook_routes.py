@@ -277,18 +277,29 @@ async def handle_webhook(request: Request):
                         })
                         # Após confirmar, encaminhar a primeira mensagem salva (se existir) para a Zaia
                         first_message = lead_props.get('Primeira Mensagem') or message_text
-                        lang = detect_language(first_message)
-                        language_prefix = "Important: Answer ONLY in English." if lang == 'en' else "Importante: Responda APENAS em Português."
-                        crm_context = []
-                        for k in ["Profissão", "Real Motivação", "Status", "Nível de Qualificação"]:
-                            if lead_props.get(k):
-                                crm_context.append(f"{k}: {lead_props.get(k)}")
-                        context_str = ("\nContexto CRM: " + "; ".join(crm_context)) if crm_context else ""
-                        zaia_prompt = f"{language_prefix}\nMensagem do cliente: {first_message}{context_str}"
+                        # Compor mensagem crua com nome confirmado
+                        def compose_message_with_name(name: str, original: str) -> str:
+                            greetings_set = {"oi", "olá", "ola", "oii", "bom dia", "boa tarde", "boa noite", "opa", "hi", "hello"}
+                            if not original:
+                                return f"Meu nome é {name} e estou dizendo oi."
+                            raw = original.strip()
+                            raw_lower = raw.lower()
+                            if raw_lower in greetings_set:
+                                return f"Meu nome é {name} e estou dizendo oi."
+                            # Se começar com um cumprimento, manter e inserir o nome
+                            first_token = raw_lower.split()[0]
+                            if first_token in greetings_set:
+                                rest = raw[len(first_token):].lstrip(', ').strip()
+                                if rest:
+                                    return f"{first_token.capitalize()}, meu nome é {name} {rest}"
+                                return f"{first_token.capitalize()}, meu nome é {name}."
+                            return f"Meu nome é {name}. {raw}"
+
+                        zaia_prompt = compose_message_with_name(suggested_name, first_message)
                         zaia_response = await ZaiaService.send_message({
                             "text": zaia_prompt,
                             "phone": phone
-                        }, metadata={"language": lang, "name": suggested_name})
+                        }, metadata={"name": suggested_name})
                         await _handle_zaia_response(phone, is_audio=False, zaia_response=zaia_response)
                         return JSONResponse({"status": "name_confirmation_positive"})
                     elif interpretation.get("confirmation") == "new_name":
@@ -298,18 +309,27 @@ async def handle_webhook(request: Request):
                             "Aguardando Confirmação Nome": False
                         })
                         first_message = lead_props.get('Primeira Mensagem') or message_text
-                        lang = detect_language(first_message)
-                        language_prefix = "Important: Answer ONLY in English." if lang == 'en' else "Importante: Responda APENAS em Português."
-                        crm_context = []
-                        for k in ["Profissão", "Real Motivação", "Status", "Nível de Qualificação"]:
-                            if lead_props.get(k):
-                                crm_context.append(f"{k}: {lead_props.get(k)}")
-                        context_str = ("\nContexto CRM: " + "; ".join(crm_context)) if crm_context else ""
-                        zaia_prompt = f"{language_prefix}\nMensagem do cliente: {first_message}{context_str}"
+                        def compose_message_with_name(name: str, original: str) -> str:
+                            greetings_set = {"oi", "olá", "ola", "oii", "bom dia", "boa tarde", "boa noite", "opa", "hi", "hello"}
+                            if not original:
+                                return f"Meu nome é {name} e estou dizendo oi."
+                            raw = original.strip()
+                            raw_lower = raw.lower()
+                            if raw_lower in greetings_set:
+                                return f"Meu nome é {name} e estou dizendo oi."
+                            first_token = raw_lower.split()[0]
+                            if first_token in greetings_set:
+                                rest = raw[len(first_token):].lstrip(', ').strip()
+                                if rest:
+                                    return f"{first_token.capitalize()}, meu nome é {name} {rest}"
+                                return f"{first_token.capitalize()}, meu nome é {name}."
+                            return f"Meu nome é {name}. {raw}"
+
+                        zaia_prompt = compose_message_with_name(new_name, first_message)
                         zaia_response = await ZaiaService.send_message({
                             "text": zaia_prompt,
                             "phone": phone
-                        }, metadata={"language": lang, "name": new_name})
+                        }, metadata={"name": new_name})
                         await _handle_zaia_response(phone, is_audio=False, zaia_response=zaia_response)
                         return JSONResponse({"status": "name_confirmation_new_name"})
                     else:
@@ -340,21 +360,20 @@ async def handle_webhook(request: Request):
                         if name_type == 'empresa com nome' and extracted:
                             logger.info("Nome parece 'Empresa com nome'. Pedindo confirmação do primeiro nome extraído.")
                             notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
-                            lang = detect_language(message_text)
-                            if lang == 'en':
-                                confirm_msg = f"I noticed the profile name looks like a business. Can I call you {extracted}?"
-                            else:
-                                confirm_msg = f"Percebi que o nome do seu perfil parece comercial. Posso te chamar de {extracted}?"
+                            # Mensagem natural com o nome de exibição e sugestão
+                            confirm_msg = (
+                                f"Hello Hello, que bom ter você por aqui! Vi aqui que seu nome está como \"{sender_name}\". "
+                                f"Posso te chamar de {extracted} mesmo, ou como prefere que eu te chame?"
+                            )
                             await ZAPIService.send_text_with_typing(phone, confirm_msg)
                             return JSONResponse({"status": "asked_name_confirmation"})
                         else:
                             logger.info("Nome parece comercial. Solicitando o primeiro nome pessoal.")
                             notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
-                            lang = detect_language(message_text)
-                            if lang == 'en':
-                                ask_msg = "Thanks for reaching out! Before we start, what's your first name?"
-                            else:
-                                ask_msg = "Que bom falar com você! Antes de começarmos, qual é o seu primeiro nome?"
+                            ask_msg = (
+                                f"Hello Hello, que bom ter você por aqui! Vi aqui que seu nome está como \"{sender_name}\". "
+                                "Como posso te chamar? Me diga apenas o seu primeiro nome."
+                            )
                             await ZAPIService.send_text_with_typing(phone, ask_msg)
                             return JSONResponse({"status": "asked_for_first_name"})
 
@@ -370,19 +389,12 @@ async def handle_webhook(request: Request):
                         await ZAPIService.send_text_with_typing(phone, greeting_message)
                         return JSONResponse({"status": "new_lead_greeted"})
                     else:
-                        # Pergunta direta: enviar para Zaia com contexto e instrução de idioma
-                        lang = detect_language(message_text)
-                        language_prefix = "Important: Answer ONLY in English." if lang == 'en' else "Importante: Responda APENAS em Português."
-                        crm_context = []
-                        # Nenhum dado extra ainda além do nome e telefone
-                        crm_context.append(f"Cliente: {first_name}")
-                        crm_context.append(f"Telefone: {phone}")
-                        context_str = "\nContexto CRM: " + "; ".join(crm_context)
-                        zaia_prompt = f"{language_prefix}\nMensagem do cliente: {message_text}{context_str}"
+                        # Pergunta direta: enviar para Zaia sem instruções, apenas a mensagem original
+                        zaia_prompt = message_text.strip()
                         zaia_response = await ZaiaService.send_message({
                             "text": zaia_prompt,
                             "phone": phone
-                        }, metadata={"language": lang, "name": first_name})
+                        }, metadata={"name": first_name})
                         await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
                         return JSONResponse({"status": "new_lead_question_sent_to_zaia"})
                 else:
@@ -400,21 +412,14 @@ async def handle_webhook(request: Request):
                         await ZAPIService.send_text_with_typing(phone, response_message)
                         return JSONResponse({"status": "existing_lead_greeted"})
                     else:
-                        # Se for uma pergunta real, enriquecemos o contexto e enviamos para a Zaia
+                        # Se for uma pergunta real, enviar para a Zaia apenas a mensagem
                         lead_props = lead_data.get('properties', {}) if lead_data else {}
                         cliente_nome = lead_props.get('Cliente') or extract_first_name(sender_name)
-                        lang = detect_language(message_text)
-                        language_prefix = "Important: Answer ONLY in English." if lang == 'en' else "Importante: Responda APENAS em Português."
-                        crm_context = []
-                        for k in ["Profissão", "Real Motivação", "Status", "Nível de Qualificação"]:
-                            if lead_props.get(k):
-                                crm_context.append(f"{k}: {lead_props.get(k)}")
-                        context_str = ("\nContexto CRM: " + "; ".join(crm_context)) if crm_context else ""
-                        zaia_prompt = f"{language_prefix}\nMensagem do cliente: {message_text}{context_str}"
+                        zaia_prompt = (message_text or '').strip()
                         zaia_response = await ZaiaService.send_message({
                             "text": zaia_prompt,
                             "phone": phone
-                        }, metadata={"language": lang, "name": cliente_nome})
+                        }, metadata={"name": cliente_nome})
                         await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
                         return JSONResponse({"status": "existing_lead_message_sent_to_zaia"})
         
