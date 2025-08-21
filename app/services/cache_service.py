@@ -24,6 +24,8 @@ class CacheService:
     _context_cache: Dict[str, dict] = {}
     # Cache em memória para chat IDs
     _chat_cache: Dict[str, str] = {}
+    # Cache em memória para override humano (pausar agente por telefone)
+    _human_override_cache: Dict[str, dict] = {}
     
     @staticmethod
     async def set_context_data(phone: str, context_data: dict):
@@ -131,3 +133,38 @@ class CacheService:
             Dict[str, str]: Todos os chat IDs
         """
         return CacheService._chat_cache.copy()
+
+    # ==========================
+    # Controle de Override Humano
+    # ==========================
+    @staticmethod
+    async def set_human_override(phone: str, active: bool = True):
+        """
+        Liga/Desliga o override humano para um telefone específico.
+        Quando ativo, o agente não deve responder automaticamente.
+        """
+        if active:
+            CacheService._human_override_cache[phone] = {
+                "active": True,
+                "since": datetime.utcnow().isoformat()
+            }
+            logger.info(f"🛑 Override humano ATIVADO para {phone}")
+        else:
+            CacheService._human_override_cache.pop(phone, None)
+            logger.info(f"▶️ Override humano DESATIVADO para {phone}")
+
+    @staticmethod
+    async def is_human_override_active(phone: str) -> bool:
+        """
+        Verifica se o override humano está ativo para o telefone.
+        """
+        data = CacheService._human_override_cache.get(phone)
+        return bool(data and data.get("active"))
+
+    @staticmethod
+    async def clear_human_override(phone: str):
+        """
+        Desativa explicitamente o override humano para o telefone.
+        """
+        CacheService._human_override_cache.pop(phone, None)
+        logger.info(f"▶️ Override humano limpo para {phone}")

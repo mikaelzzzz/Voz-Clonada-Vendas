@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from app.services.z_api_service import ZAPIService
 from app.services.zaia_service import ZaiaService
+from app.services.cache_service import CacheService
 from app.services.elevenlabs_service import ElevenLabsService
 from app.services.whisper_service import WhisperService
 from app.services.notion_service import NotionService
@@ -186,6 +187,42 @@ async def handle_webhook(request: Request):
     logger.info(f"--- NOVO WEBHOOK RECEBIDO ---\n{data}")
 
     try:
+        # Se for uma mensagem enviada por você (fromMe=True), ativar override humano
+        if data.get('type') == 'ReceivedCallback' and data.get('fromMe', False):
+            try:
+                phone_raw = data.get('phone')
+                phone = re.sub(r'\D', '', str(phone_raw)) if phone_raw else None
+                if phone:
+                    # Se for uma reação ✅ enviada por você, desativar override humano
+                    reaction = data.get('reaction') or {}
+                    reaction_value = (reaction.get('value') or '').strip()
+                    if reaction_value == '✅':
+                        await CacheService.set_human_override(phone, False)
+                        logger.info(f"▶️ Override humano DESATIVADO via reação ✅ para {phone}")
+                        return JSONResponse({"status": "human_override_disabled_by_reaction"})
+
+                    text_message = ''
+                    if isinstance(data.get('text'), dict):
+                        text_message = (data.get('text', {}).get('message') or '').strip().lower()
+
+                    # Comandos simples para desativar o override humano
+                    disable_commands = {"bot on", "agente on", "ativar bot", "retomar bot"}
+                    enable_commands = {"bot off", "agente off", "pausar bot", "assumir"}
+
+                    if text_message in disable_commands:
+                        await CacheService.set_human_override(phone, False)
+                        logger.info(f"▶️ Override humano DESATIVADO via comando para {phone}")
+                        return JSONResponse({"status": "human_override_disabled"})
+
+                    # Qualquer outra mensagem enviada por você ativa o override humano
+                    await CacheService.set_human_override(phone, True)
+                    logger.info(f"🛑 Override humano ativado por mensagem manual para {phone}")
+                    return JSONResponse({"status": "human_override_enabled"})
+            except Exception as e:
+                logger.warning(f"Falha ao ativar override humano: {e}")
+                # Mesmo com falha ao registrar, não processar como mensagem do cliente
+                return JSONResponse({"status": "human_override_attempted"})
+
         # Rota 1: Webhook de Qualificação da Zaia
         if 'profissao' in data and 'motivo' in data and 'whatsapp' in data:
             phone_raw = data.get('whatsapp')
@@ -247,6 +284,11 @@ async def handle_webhook(request: Request):
                 return JSONResponse({"status": "invalid_sender_data"})
 
             logger.info(f"Processando mensagem de '{sender_name}' ({phone})")
+
+            # Se override humano estiver ativo, não responder automaticamente
+            if await CacheService.is_human_override_active(phone):
+                logger.info(f"🛑 Override humano ativo para {phone}. Não enviaremos resposta automática.")
+                return JSONResponse({"status": "human_override_active_skip"})
             
             message_text = ""
             is_audio = 'audio' in data and data.get('audio')

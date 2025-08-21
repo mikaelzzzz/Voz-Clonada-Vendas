@@ -3,6 +3,7 @@ import base64
 import aiohttp
 import asyncio
 from app.config.settings import Settings
+from app.services.cache_service import CacheService
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,10 @@ class ZAPIService:
         """
         Envia mensagem de texto com simulação de digitação usando o delayTyping da Z-API.
         """
+        # Respeitar override humano: não enviar mensagens automáticas
+        if await CacheService.is_human_override_active(phone):
+            logger.info(f"🛑 Override humano ativo para {phone}. Pulando envio de texto.")
+            return {"skipped": "human_override_active"}
         typing_duration = ZAPIService.calculate_typing_duration(message)
         return await ZAPIService.send_text(phone, message, delay_typing=int(typing_duration))
 
@@ -77,6 +82,10 @@ class ZAPIService:
         """
         Envia mensagem de texto via Z-API, com suporte a delayTyping.
         """
+        # Respeitar override humano: não enviar mensagens automáticas
+        if await CacheService.is_human_override_active(phone):
+            logger.info(f"🛑 Override humano ativo para {phone}. Pulando envio de texto.")
+            return {"skipped": "human_override_active"}
         settings = Settings()
         url = f"{settings.Z_API_BASE_URL}/send-text"
         headers = {
@@ -116,6 +125,10 @@ class ZAPIService:
         Envia áudio, usando um delayMessage variável baseado no texto original
         para simular o tempo de gravação.
         """
+        # Respeitar override humano: não enviar mensagens automáticas
+        if await CacheService.is_human_override_active(phone):
+            logger.info(f"🛑 Override humano ativo para {phone}. Pulando envio de áudio.")
+            return {"skipped": "human_override_active"}
         settings = Settings()
         url = f"{settings.Z_API_BASE_URL}/send-audio"
         headers = {
@@ -155,6 +168,10 @@ class ZAPIService:
         """
         Envia áudio via Z-API sem delay (mantido para compatibilidade, se necessário).
         """
+        # Respeitar override humano: não enviar mensagens automáticas
+        if await CacheService.is_human_override_active(phone):
+            logger.info(f"🛑 Override humano ativo para {phone}. Pulando envio de áudio.")
+            return {"skipped": "human_override_active"}
         settings = Settings()
         url = f"{settings.Z_API_BASE_URL}/send-audio"
         try:
