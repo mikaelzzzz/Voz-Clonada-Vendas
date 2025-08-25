@@ -201,11 +201,16 @@ async def handle_webhook(request: Request):
                         logger.info(f"▶️ Override humano DESATIVADO via reação ✅ para {phone}")
                         return JSONResponse({"status": "human_override_disabled_by_reaction"})
 
+                    # Se a mensagem veio da API (enviada pelo nosso sistema), não ativar override
+                    if data.get('fromApi', False):
+                        logger.info(f"ℹ️ Mensagem fromMe originada pela API ignorada para override ({phone})")
+                        return JSONResponse({"status": "ignored_api_message"})
+
                     text_message = ''
                     if isinstance(data.get('text'), dict):
                         text_message = (data.get('text', {}).get('message') or '').strip().lower()
 
-                    # Comandos simples para desativar o override humano
+                    # Comandos simples para desativar/ativar o override humano
                     disable_commands = {"bot on", "agente on", "ativar bot", "retomar bot"}
                     enable_commands = {"bot off", "agente off", "pausar bot", "assumir"}
 
@@ -214,10 +219,11 @@ async def handle_webhook(request: Request):
                         logger.info(f"▶️ Override humano DESATIVADO via comando para {phone}")
                         return JSONResponse({"status": "human_override_disabled"})
 
-                    # Qualquer outra mensagem enviada por você ativa o override humano
-                    await CacheService.set_human_override(phone, True)
-                    logger.info(f"🛑 Override humano ativado por mensagem manual para {phone}")
-                    return JSONResponse({"status": "human_override_enabled"})
+                    if text_message in enable_commands or text_message:
+                        # Qualquer outra mensagem enviada manualmente por você ativa o override humano
+                        await CacheService.set_human_override(phone, True)
+                        logger.info(f"🛑 Override humano ativado por mensagem manual para {phone}")
+                        return JSONResponse({"status": "human_override_enabled"})
             except Exception as e:
                 logger.warning(f"Falha ao ativar override humano: {e}")
                 # Mesmo com falha ao registrar, não processar como mensagem do cliente
