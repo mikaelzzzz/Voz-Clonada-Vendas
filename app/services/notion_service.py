@@ -95,10 +95,11 @@ class NotionService:
             print(f"[NOTION_SERVICE_ERROR] {error_message}")
             return None
 
-    def create_or_update_lead(self, sender_name: str, phone: str, photo_url: str = None) -> bool:
+    def create_or_update_lead(self, sender_name: str, phone: str, photo_url: str = None, first_message: str = None) -> bool:
         """
         Cria ou atualiza um lead no Notion, com lógica de dupla verificação
         para prevenir duplicatas por condição de corrida.
+        Adiciona a primeira mensagem do lead se fornecida.
         Retorna True se um novo lead foi criado, False se foi atualizado.
         """
         if not self.api_key or not self.database_id:
@@ -119,6 +120,9 @@ class NotionService:
             "Telefone": {"rich_text": [{"text": {"content": phone}}]},
             "Link Rápido WhatsApp": {"url": f"https://wa.me/{phone}"}
         }
+        
+        if first_message:
+            properties["Primeira Mensagem"] = {"rich_text": [{"text": {"content": first_message}}]}
 
         # Monta o payload completo, incluindo a capa se a URL da foto existir
         payload = {"properties": properties}

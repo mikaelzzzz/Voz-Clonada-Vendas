@@ -15,14 +15,15 @@ from app.config.settings import Settings
 from app.services.qualification_service import QualificationService
 from app.services.context_service import ContextService
 from langdetect import detect, LangDetectException
+from typing import Dict
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-BUFFER_SECONDS = 1
-_message_buffer = {}
+BUFFER_SECONDS = 15  # Aumentado para 15 segundos
+_message_timers: Dict[str, asyncio.Task] = {}
 
 def is_commercial_name(name: str) -> bool:
     """
@@ -185,6 +186,104 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
             # A verificação de delay de contexto foi movida para o fluxo principal
             await ZAPIService.send_text_with_typing(phone, ai_response_text)
 
+async def _process_buffered_messages(phone: str, is_audio: bool, initial_data: dict):
+    """
+    Função para processar as mensagens no buffer após o tempo de espera.
+    """
+    logger.info(f"Tempo de espera para {phone} finalizado. Processando mensagens.")
+    
+    if phone in _message_timers:
+        _message_timers.pop(phone)
+
+    message_text = await CacheService.get_and_clear_buffer(phone)
+    if not message_text:
+        logger.warning(f"Nenhuma mensagem no buffer para {phone} após o tempo de espera.")
+        return
+
+    logger.info(f"Mensagens consolidadas para {phone}: '{message_text}'")
+    
+    sender_name = initial_data.get('senderName')
+    notion_service = NotionService()
+    qualification_service = QualificationService()
+    lead_data = notion_service.get_lead_data_by_phone(phone)
+
+    try:
+        if lead_data and lead_data.get('properties', {}).get('Aguardando Confirmação Nome', False):
+            lead_props = lead_data.get('properties', {})
+            cliente_exibicao = lead_props.get('Cliente') or sender_name
+            ai_name_analysis = await qualification_service.analyze_name_with_ai(cliente_exibicao)
+            suggested_name = ai_name_analysis.get('extracted_name') or extract_first_name(cliente_exibicao)
+            interpretation = await qualification_service.interpret_name_confirmation_with_ai(suggested_name, message_text)
+
+            if interpretation.get("confirmation") == "positive":
+                notion_service.update_lead_properties(phone, {"Cliente": suggested_name, "Aguardando Confirmação Nome": False})
+                first_message = lead_props.get('Primeira Mensagem') or message_text
+                zaia_prompt = f"Meu nome é {suggested_name}. {first_message}"
+                zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": suggested_name})
+                await _handle_zaia_response(phone, is_audio=False, zaia_response=zaia_response)
+            
+            elif interpretation.get("confirmation") == "new_name":
+                new_name = interpretation.get("name") or suggested_name
+                notion_service.update_lead_properties(phone, {"Cliente": new_name, "Aguardando Confirmação Nome": False})
+                first_message = lead_props.get('Primeira Mensagem') or message_text
+                zaia_prompt = f"Meu nome é {new_name}. {first_message}"
+                zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": new_name})
+                await _handle_zaia_response(phone, is_audio=False, zaia_response=zaia_response)
+
+            else:
+                await ZAPIService.send_text_with_typing(phone, "Perfeito! Como posso te chamar? Me diga apenas o seu primeiro nome.")
+        else:
+            is_new_lead = not bool(lead_data)
+            if is_new_lead:
+                # Salva a primeira mensagem completa no Notion para referência.
+                notion_service.create_or_update_lead(sender_name, phone, initial_data.get('photo'), first_message=message_text)
+                
+                ai_name = await qualification_service.analyze_name_with_ai(sender_name)
+                name_type = (ai_name.get('type') or '').lower()
+                extracted = ai_name.get('extracted_name')
+                looks_commercial = is_commercial_name(sender_name) or name_type in ['empresa', 'empresa com nome']
+
+                if looks_commercial:
+                    notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True, "Primeira Mensagem": message_text})
+                    if name_type == 'empresa com nome' and extracted:
+                        confirm_msg = f"Hello Hello, que bom ter você por aqui! Vi aqui que seu nome está como \"{sender_name}\". Posso te chamar de {extracted} mesmo, ou como prefere que eu te chame?"
+                        await ZAPIService.send_text_with_typing(phone, confirm_msg)
+                    else:
+                        ask_msg = f"Hello Hello, que bom ter você por aqui! Vi aqui que seu nome está como \"{sender_name}\". Como prefere que eu te chame?"
+                        await ZAPIService.send_text_with_typing(phone, ask_msg)
+                else:
+                    first_name = extract_first_name(sender_name)
+                    normalized_message = (message_text or '').lower().strip()
+                    greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa', 'hi', 'hello']
+                    if normalized_message in greetings:
+                        lang = detect_language(message_text)
+                        greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
+                        if lang == 'en':
+                            greeting_message = f"Hello Hello, {first_name}! How can I help you with your English goals today?"
+                        await ZAPIService.send_text_with_typing(phone, greeting_message)
+                    else:
+                        zaia_prompt = message_text.strip()
+                        zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": first_name})
+                        await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
+            else:
+                # Lead existente
+                normalized_message = message_text.lower().strip()
+                greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
+                if normalized_message in greetings:
+                    first_name = extract_first_name(sender_name)
+                    response_message = f"Hello Hello, {first_name}! Como posso te ajudar hoje?"
+                    await ZAPIService.send_text_with_typing(phone, response_message)
+                else:
+                    lead_props = lead_data.get('properties', {}) if lead_data else {}
+                    cliente_nome = lead_props.get('Cliente') or extract_first_name(sender_name)
+                    zaia_prompt = (message_text or '').strip()
+                    zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": cliente_nome})
+                    await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
+
+    except Exception as e:
+        logger.error(f"Erro ao processar mensagens bufferizadas para {phone}: {e}") 
+
+
 @router.post("")
 async def handle_webhook(request: Request):
     data = await request.json()
@@ -293,9 +392,6 @@ async def handle_webhook(request: Request):
             if not phone or not sender_name:
                 return JSONResponse({"status": "invalid_sender_data"})
 
-            logger.info(f"Processando mensagem de '{sender_name}' ({phone})")
-
-            # Se override humano estiver ativo, não responder automaticamente
             if await CacheService.is_human_override_active(phone):
                 logger.info(f"🛑 Override humano ativo para {phone}. Não enviaremos resposta automática.")
                 return JSONResponse({"status": "human_override_active_skip"})
@@ -307,182 +403,25 @@ async def handle_webhook(request: Request):
             elif 'text' in data and data.get('text'):
                 message_text = data['text'].get('message', '')
 
-            messages = _message_buffer.setdefault(phone, [])
-            messages.append(message_text)
-            index = len(messages)
-            await asyncio.sleep(BUFFER_SECONDS)
-            if len(_message_buffer.get(phone, [])) != index:
-                return JSONResponse({"status": "buffering"})
-            message_text = " ".join(_message_buffer.pop(phone, []))
+            if not message_text.strip():
+                return JSONResponse({"status": "empty_message_ignored"})
 
-            notion_service = NotionService()
-            qualification_service = QualificationService()
-            lead_data = notion_service.get_lead_data_by_phone(phone)
+            # Adiciona a mensagem ao buffer
+            await CacheService.add_to_buffer(phone, message_text)
+            logger.info(f"Mensagem de {phone} adicionada ao buffer. Aguardando próximas mensagens.")
 
-            if lead_data and lead_data.get('properties', {}).get('Aguardando Confirmação Nome', False):
-                # --- Fluxo de confirmação de nome ---
-                try:
-                    lead_props = lead_data.get('properties', {})
-                    cliente_exibicao = lead_props.get('Cliente') or sender_name
-                    # Sugere um nome a partir do nome exibido do Notion
-                    ai_name_analysis = await qualification_service.analyze_name_with_ai(cliente_exibicao)
-                    suggested_name = ai_name_analysis.get('extracted_name') or extract_first_name(cliente_exibicao)
+            # Se já existe um timer, cancele-o para reiniciar a contagem
+            if phone in _message_timers:
+                _message_timers[phone].cancel()
 
-                    interpretation = await qualification_service.interpret_name_confirmation_with_ai(suggested_name, message_text)
+            # Inicia um novo timer para processar as mensagens
+            loop = asyncio.get_event_loop()
+            _message_timers[phone] = loop.create_task(
+                _delayed_message_processor(phone, is_audio, data)
+            )
 
-                    if interpretation.get("confirmation") == "positive":
-                        notion_service.update_lead_properties(phone, {
-                            "Cliente": suggested_name,
-                            "Aguardando Confirmação Nome": False
-                        })
-                        # Após confirmar, encaminhar a primeira mensagem salva (se existir) para a Zaia
-                        first_message = lead_props.get('Primeira Mensagem') or message_text
-                        # Compor mensagem crua com nome confirmado
-                        def compose_message_with_name(name: str, original: str) -> str:
-                            greetings_set = {"oi", "olá", "ola", "oii", "bom dia", "boa tarde", "boa noite", "opa", "hi", "hello"}
-                            if not original:
-                                return f"Meu nome é {name} e estou dizendo oi."
-                            raw = original.strip()
-                            raw_lower = raw.lower()
-                            if raw_lower in greetings_set:
-                                return f"Meu nome é {name} e estou dizendo oi."
-                            # Se começar com um cumprimento, manter e inserir o nome
-                            first_token = raw_lower.split()[0]
-                            if first_token in greetings_set:
-                                rest = raw[len(first_token):].lstrip(', ').strip()
-                                if rest:
-                                    return f"{first_token.capitalize()}, meu nome é {name} {rest}"
-                                return f"{first_token.capitalize()}, meu nome é {name}."
-                            return f"Meu nome é {name}. {raw}"
-
-                        zaia_prompt = compose_message_with_name(suggested_name, first_message)
-                        zaia_response = await ZaiaService.send_message({
-                            "text": zaia_prompt,
-                            "phone": phone
-                        }, metadata={"name": suggested_name})
-                        await _handle_zaia_response(phone, is_audio=False, zaia_response=zaia_response)
-                        return JSONResponse({"status": "name_confirmation_positive"})
-                    elif interpretation.get("confirmation") == "new_name":
-                        new_name = interpretation.get("name") or suggested_name
-                        notion_service.update_lead_properties(phone, {
-                            "Cliente": new_name,
-                            "Aguardando Confirmação Nome": False
-                        })
-                        first_message = lead_props.get('Primeira Mensagem') or message_text
-                        def compose_message_with_name(name: str, original: str) -> str:
-                            greetings_set = {"oi", "olá", "ola", "oii", "bom dia", "boa tarde", "boa noite", "opa", "hi", "hello"}
-                            if not original:
-                                return f"Meu nome é {name} e estou dizendo oi."
-                            raw = original.strip()
-                            raw_lower = raw.lower()
-                            if raw_lower in greetings_set:
-                                return f"Meu nome é {name} e estou dizendo oi."
-                            first_token = raw_lower.split()[0]
-                            if first_token in greetings_set:
-                                rest = raw[len(first_token):].lstrip(', ').strip()
-                                if rest:
-                                    return f"{first_token.capitalize()}, meu nome é {name} {rest}"
-                                return f"{first_token.capitalize()}, meu nome é {name}."
-                            return f"Meu nome é {name}. {raw}"
-
-                        zaia_prompt = compose_message_with_name(new_name, first_message)
-                        zaia_response = await ZaiaService.send_message({
-                            "text": zaia_prompt,
-                            "phone": phone
-                        }, metadata={"name": new_name})
-                        await _handle_zaia_response(phone, is_audio=False, zaia_response=zaia_response)
-                        return JSONResponse({"status": "name_confirmation_new_name"})
-                    else:
-                        # Pede novamente de forma objetiva pelo primeiro nome
-                        await ZAPIService.send_text_with_typing(phone, "Perfeito! Como posso te chamar? Me diga apenas o seu primeiro nome.")
-                        return JSONResponse({"status": "name_confirmation_reask"})
-                except Exception as e:
-                    logger.error(f"Erro no fluxo de confirmação de nome: {e}")
-                    return JSONResponse({"status": "name_confirmation_error"})
-            else:
-                is_new_lead = not bool(lead_data)
-                if is_new_lead:
-                    notion_service.create_or_update_lead(sender_name, phone, data.get('photo'))
-                    # Análise de nome comercial com IA (fallback para heurística)
-                    ai_name = await qualification_service.analyze_name_with_ai(sender_name)
-                    name_type = (ai_name.get('type') or '').lower()
-                    extracted = ai_name.get('extracted_name')
-                    looks_commercial = is_commercial_name(sender_name) or name_type in ['empresa', 'empresa com nome']
-
-                    normalized_message = (message_text or '').lower().strip()
-                    greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa', 'hi', 'hello']
-
-                    if looks_commercial:
-                        # Salva a primeira mensagem para reutilizar após confirmar o nome
-                        if message_text:
-                            notion_service.update_lead_properties(phone, {"Primeira Mensagem": message_text})
-
-                        if name_type == 'empresa com nome' and extracted:
-                            logger.info("Nome parece 'Empresa com nome'. Pedindo confirmação do primeiro nome extraído.")
-                            notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
-                            # Mensagem natural com o nome de exibição e sugestão
-                            confirm_msg = (
-                                f"Hello Hello, que bom ter você por aqui! Vi aqui que seu nome está como \"{sender_name}\". "
-                                f"Posso te chamar de {extracted} mesmo, ou como prefere que eu te chame?"
-                            )
-                            await ZAPIService.send_text_with_typing(phone, confirm_msg)
-                            return JSONResponse({"status": "asked_name_confirmation"})
-                        else:
-                            logger.info("Nome parece comercial. Solicitando o primeiro nome pessoal.")
-                            notion_service.update_lead_properties(phone, {"Aguardando Confirmação Nome": True})
-                            ask_msg = (
-                                f"Hello Hello, que bom ter você por aqui! Vi aqui que seu nome está como \"{sender_name}\". "
-                                "Como prefere que eu te chame?"
-                            )
-                            await ZAPIService.send_text_with_typing(phone, ask_msg)
-                            return JSONResponse({"status": "asked_for_first_name"})
-
-                    # Caso não seja comercial: tratar cumprimento vs pergunta
-                    first_name = extract_first_name(sender_name)
-                    if normalized_message in greetings:
-                        logger.info("Novo lead (pessoal) enviou cumprimento. Enviando saudação.")
-                        lang = detect_language(message_text)
-                        if lang == 'en':
-                            greeting_message = f"Hello Hello, {first_name}! How can I help you with your English goals today?"
-                        else:
-                            greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
-                        await ZAPIService.send_text_with_typing(phone, greeting_message)
-                        return JSONResponse({"status": "new_lead_greeted"})
-                    else:
-                        # Pergunta direta: enviar para Zaia sem instruções, apenas a mensagem original
-                        zaia_prompt = message_text.strip()
-                        zaia_response = await ZaiaService.send_message({
-                            "text": zaia_prompt,
-                            "phone": phone
-                        }, metadata={"name": first_name})
-                        await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
-                        return JSONResponse({"status": "new_lead_question_sent_to_zaia"})
-                else:
-                    # Lead existente
-                    logger.info(f"Lead existente ({phone}). Analisando a mensagem.")
-                    
-                    # Se for um cumprimento, nosso código responde diretamente
-                    normalized_message = message_text.lower().strip()
-                    greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
-
-                    if normalized_message in greetings:
-                        logger.info("Mensagem é um cumprimento. Respondendo diretamente.")
-                        first_name = extract_first_name(sender_name)
-                        response_message = f"Hello Hello, {first_name}! Como posso te ajudar hoje?"
-                        await ZAPIService.send_text_with_typing(phone, response_message)
-                        return JSONResponse({"status": "existing_lead_greeted"})
-                    else:
-                        # Se for uma pergunta real, enviar para a Zaia apenas a mensagem
-                        lead_props = lead_data.get('properties', {}) if lead_data else {}
-                        cliente_nome = lead_props.get('Cliente') or extract_first_name(sender_name)
-                        zaia_prompt = (message_text or '').strip()
-                        zaia_response = await ZaiaService.send_message({
-                            "text": zaia_prompt,
-                            "phone": phone
-                        }, metadata={"name": cliente_nome})
-                        await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
-                        return JSONResponse({"status": "existing_lead_message_sent_to_zaia"})
-        
+            return JSONResponse({"status": "message_buffered"})
+            
         # Se nenhum webhook corresponder
         else:
             logger.info("Tipo de webhook não processado.")
@@ -495,3 +434,10 @@ async def handle_webhook(request: Request):
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
     
     return JSONResponse({"status": "ok"}) 
+
+async def _delayed_message_processor(phone: str, is_audio: bool, initial_data: dict):
+    """
+    Aguarda um tempo e depois processa a mensagem.
+    """
+    await asyncio.sleep(BUFFER_SECONDS)
+    await _process_buffered_messages(phone, is_audio, initial_data) 

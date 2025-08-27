@@ -2,12 +2,18 @@ services:
   - type: web
     name: whatsapp-ai-assistant
     env: python
-    rootDir: pyserver
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --workers 4 --bind 0.0.0.0:$PORT app:app
+    startCommand: gunicorn --workers 4 --bind 0.0.0.0:$PORT main:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.8
+      - fromService:
+          type: redis
+          name: voz-clonada-redis
+          property: connectionString
+        key: REDIS_URL
+      - key: REDIS_ENABLED
+        value: "True"
       - key: WEB_CONCURRENCY
         value: 4
     healthCheckPath: /health
