@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from datetime import datetime
@@ -19,6 +20,9 @@ from langdetect import detect, LangDetectException
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+BUFFER_SECONDS = 1
+_message_buffer = {}
 
 def is_commercial_name(name: str) -> bool:
     """
@@ -302,6 +306,14 @@ async def handle_webhook(request: Request):
                 message_text = await WhisperService().transcribe_audio(data['audio']['audioUrl'])
             elif 'text' in data and data.get('text'):
                 message_text = data['text'].get('message', '')
+
+            messages = _message_buffer.setdefault(phone, [])
+            messages.append(message_text)
+            index = len(messages)
+            await asyncio.sleep(BUFFER_SECONDS)
+            if len(_message_buffer.get(phone, [])) != index:
+                return JSONResponse({"status": "buffering"})
+            message_text = " ".join(_message_buffer.pop(phone, []))
 
             notion_service = NotionService()
             qualification_service = QualificationService()
