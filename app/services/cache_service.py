@@ -11,7 +11,13 @@ logger = logging.getLogger(__name__)
 
 class CacheService:
     _redis_client: Optional[redis.Redis] = None
+
+    # Fallback caches in-memory
+    _context_cache: Dict[str, dict] = {}
+    _chat_cache: Dict[str, str] = {}
+    _human_override_cache: Dict[str, dict] = {}
     _message_buffer_cache: Dict[str, list] = {}
+    
     _message_timers: Dict[str, asyncio.Task] = {}
 
     @classmethod
