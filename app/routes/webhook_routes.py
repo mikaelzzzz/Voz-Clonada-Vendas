@@ -25,6 +25,24 @@ router = APIRouter()
 BUFFER_SECONDS = 15  # Aumentado para 15 segundos
 _message_timers: Dict[str, asyncio.Task] = {}
 
+def _format_zaia_prompt_with_name(name: str, message: str) -> str:
+    """
+    Formata o prompt para a Zaia, injetando o nome do cliente de forma natural.
+    """
+    message_strip = message.strip()
+    
+    # Tenta encontrar o final da primeira frase (após ., ? ou !)
+    match = re.search(r'[.!?]', message_strip)
+    
+    if match:
+        end_index = match.end()
+        part1 = message_strip[:end_index]
+        part2 = message_strip[end_index:]
+        return f"{part1.strip()} (me chamo {name}). {part2.strip()}"
+    else:
+        # Se não houver pontuação, formata de uma maneira padrão
+        return f"Meu nome é {name}. {message_strip}"
+
 def is_commercial_name(name: str) -> bool:
     """
     Determina se um nome é provavelmente comercial ou de negócio.
@@ -262,7 +280,8 @@ async def _process_buffered_messages(phone: str, is_audio: bool, initial_data: d
                             greeting_message = f"Hello Hello, {first_name}! How can I help you with your English goals today?"
                         await ZAPIService.send_text_with_typing(phone, greeting_message)
                     else:
-                        zaia_prompt = message_text.strip()
+                        # Pergunta direta: injetar o nome no prompt para a Zaia
+                        zaia_prompt = _format_zaia_prompt_with_name(first_name, message_text)
                         zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": first_name})
                         await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
             else:
@@ -276,7 +295,8 @@ async def _process_buffered_messages(phone: str, is_audio: bool, initial_data: d
                 else:
                     lead_props = lead_data.get('properties', {}) if lead_data else {}
                     cliente_nome = lead_props.get('Cliente') or extract_first_name(sender_name)
-                    zaia_prompt = (message_text or '').strip()
+                    # Pergunta real: injetar o nome no prompt para a Zaia
+                    zaia_prompt = _format_zaia_prompt_with_name(cliente_nome, message_text)
                     zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": cliente_nome})
                     await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
 
