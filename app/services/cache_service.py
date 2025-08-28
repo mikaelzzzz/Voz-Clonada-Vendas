@@ -177,29 +177,66 @@ class CacheService:
         logger.info(f"▶️ Override humano limpo para {phone}")
 
     @classmethod
-    async def add_to_buffer(cls, phone: str, message: str) -> int:
-        """Adiciona uma mensagem ao buffer de um telefone e retorna o novo tamanho do buffer."""
+    async def add_message_to_buffer(cls, phone: str, message_id: str, message_text: str):
+        """Adiciona uma mensagem com ID ao buffer."""
+        message_obj = {'id': message_id, 'text': message_text}
         client = await cls._get_redis_client() if settings.is_redis_enabled else None
         if client:
             key = f"buffer:{phone}"
-            await client.rpush(key, message)
-            await client.expire(key, 30)  # Garante que o buffer expire
-            return await client.llen(key)
+            await client.rpush(key, json.dumps(message_obj))
+            await client.expire(key, 120)  # Expira em 2 minutos
         else:
             if phone not in cls._message_buffer_cache:
                 cls._message_buffer_cache[phone] = []
-            cls._message_buffer_cache[phone].append(message)
-            return len(cls._message_buffer_cache[phone])
+            cls._message_buffer_cache[phone].append(message_obj)
 
     @classmethod
-    async def get_and_clear_buffer(cls, phone: str) -> str:
-        """Obtém todas as mensagens do buffer, as une e limpa o buffer."""
+    async def update_message_in_buffer(cls, phone: str, message_id: str, new_message_text: str):
+        """Atualiza o texto de uma mensagem existente no buffer."""
         client = await cls._get_redis_client() if settings.is_redis_enabled else None
         if client:
             key = f"buffer:{phone}"
-            messages = await client.lrange(key, 0, -1)
+            messages_json = await client.lrange(key, 0, -1)
+            for i, msg_json in enumerate(messages_json):
+                msg = json.loads(msg_json)
+                if msg.get('id') == message_id:
+                    msg['text'] = new_message_text
+                    await client.lset(key, i, json.dumps(msg))
+                    logger.info(f"Mensagem {message_id} atualizada no Redis para {phone}.")
+                    break
+        else:  # fallback
+            if phone in cls._message_buffer_cache:
+                for msg in cls._message_buffer_cache[phone]:
+                    if msg.get('id') == message_id:
+                        msg['text'] = new_message_text
+                        logger.info(f"Mensagem {message_id} atualizada no cache em memória para {phone}.")
+                        break
+    
+    @classmethod
+    async def get_and_clear_buffer(cls, phone: str) -> str:
+        """Obtém todas as mensagens do buffer, as une com pontos e limpa o buffer."""
+        client = await cls._get_redis_client() if settings.is_redis_enabled else None
+        
+        texts = []
+        if client:
+            key = f"buffer:{phone}"
+            messages_json = await client.lrange(key, 0, -1)
             await client.delete(key)
-            return " ".join(messages)
+            texts = [json.loads(msg_json).get('text', '') for msg_json in messages_json if msg_json]
         else:
-            messages = cls._message_buffer_cache.pop(phone, [])
-            return " ".join(messages)
+            messages_obj = cls._message_buffer_cache.pop(phone, [])
+            texts = [msg.get('text', '') for msg in messages_obj]
+
+        if not texts:
+            return ""
+
+        # Processa os textos para formar uma única mensagem coesa, separando por pontos.
+        full_message = ""
+        for text in texts:
+            cleaned_text = text.strip()
+            if cleaned_text:
+                if full_message and not full_message.endswith(('.', '?', '!')):
+                    full_message += "."
+                full_message += " " + cleaned_text
+        
+        return full_message.strip()

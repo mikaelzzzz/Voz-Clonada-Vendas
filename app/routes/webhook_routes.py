@@ -16,13 +16,14 @@ from app.services.qualification_service import QualificationService
 from app.services.context_service import ContextService
 from langdetect import detect, LangDetectException
 from typing import Dict
+import random
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-BUFFER_SECONDS = 15  # Aumentado para 15 segundos
+BUFFER_SECONDS = 20  # Aumentado para 20 segundos
 _message_timers: Dict[str, asyncio.Task] = {}
 
 def _format_zaia_prompt_with_name(name: str, message: str) -> str:
@@ -304,12 +305,41 @@ async def _process_buffered_messages(phone: str, is_audio: bool, initial_data: d
         logger.error(f"Erro ao processar mensagens bufferizadas para {phone}: {e}") 
 
 
+async def _delayed_message_processor(phone: str, is_audio: bool, initial_data: dict):
+    """
+    Aguarda um tempo e depois processa a mensagem, usando Redis para coordenação.
+    """
+    job_id = str(random.randint(1000, 9999))
+    timer_key = f"timer_job_id:{phone}"
+    
+    client = await CacheService._get_redis_client()
+    if not client:
+        # Fallback para lógica sem Redis (ambiente de dev)
+        await asyncio.sleep(BUFFER_SECONDS)
+        await _process_buffered_messages(phone, is_audio, initial_data)
+        return
+
+    await client.set(timer_key, job_id, ex=BUFFER_SECONDS + 5)
+    
+    await asyncio.sleep(BUFFER_SECONDS)
+
+    current_job_id = await client.get(timer_key)
+    if current_job_id == job_id:
+        await _process_buffered_messages(phone, is_audio, initial_data)
+    else:
+        logger.info(f"Processamento para {phone} cancelado por um job mais recente.")
+
 @router.post("")
 async def handle_webhook(request: Request):
     data = await request.json()
     logger.info(f"--- NOVO WEBHOOK RECEBIDO ---\n{data}")
 
     try:
+        # Ignora webhooks de mensagem editada para evitar duplicidade
+        if data.get('isEdit'):
+            logger.info(f"Webhook de mensagem editada ignorado para {data.get('phone')}")
+            return JSONResponse({"status": "edited_message_ignored"})
+            
         # Se for uma mensagem enviada por você (fromMe=True), ativar override humano
         if data.get('type') == 'ReceivedCallback' and data.get('fromMe', False):
             try:
@@ -426,17 +456,19 @@ async def handle_webhook(request: Request):
             if not message_text.strip():
                 return JSONResponse({"status": "empty_message_ignored"})
 
-            # Adiciona a mensagem ao buffer
-            await CacheService.add_to_buffer(phone, message_text)
-            logger.info(f"Mensagem de {phone} adicionada ao buffer. Aguardando próximas mensagens.")
+            is_edit = data.get('isEdit', False)
+            message_id = data.get('messageId')
 
-            # Se já existe um timer, cancele-o para reiniciar a contagem
-            if phone in _message_timers:
-                _message_timers[phone].cancel()
+            if is_edit:
+                await CacheService.update_message_in_buffer(phone, message_id, message_text)
+                logger.info(f"Mensagem de {phone} (ID: {message_id}) atualizada no buffer.")
+            else:
+                await CacheService.add_message_to_buffer(phone, message_id, message_text)
+                logger.info(f"Mensagem de {phone} adicionada ao buffer. Aguardando próximas mensagens.")
 
-            # Inicia um novo timer para processar as mensagens
+            # Reinicia o timer a cada nova mensagem ou edição
             loop = asyncio.get_event_loop()
-            _message_timers[phone] = loop.create_task(
+            task = loop.create_task(
                 _delayed_message_processor(phone, is_audio, data)
             )
 
@@ -454,10 +486,3 @@ async def handle_webhook(request: Request):
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
     
     return JSONResponse({"status": "ok"}) 
-
-async def _delayed_message_processor(phone: str, is_audio: bool, initial_data: dict):
-    """
-    Aguarda um tempo e depois processa a mensagem.
-    """
-    await asyncio.sleep(BUFFER_SECONDS)
-    await _process_buffered_messages(phone, is_audio, initial_data) 
