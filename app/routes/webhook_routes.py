@@ -205,6 +205,28 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
             # A verificação de delay de contexto foi movida para o fluxo principal
             await ZAPIService.send_text_with_typing(phone, ai_response_text)
 
+        # Após enviar a resposta, tentar capturar variável 'investimento' do retorno da Zaia
+        try:
+            investimento_value = None
+            # Possíveis campos estruturados
+            for key in ("variables", "data", "custom", "metadata"):
+                section = zaia_response.get(key) or {}
+                if isinstance(section, dict) and section.get("investimento"):
+                    investimento_value = str(section.get("investimento")).strip()
+                    break
+            # Fallback: tentar extrair do texto (ex.: "Investimento: R$ 300/mês")
+            if not investimento_value and isinstance(ai_response_text, str):
+                m = re.search(r"(?i)investimento\s*[:\-]\s*([^\n]+)", ai_response_text)
+                if m:
+                    investimento_value = m.group(1).strip()
+            
+            if investimento_value:
+                notion_service = NotionService()
+                notion_service.update_lead_properties(phone, {"Investimento": investimento_value})
+                logger.info(f"💾 Investimento capturado e salvo no Notion para {phone}: {investimento_value}")
+        except Exception as e:
+            logger.warning(f"Não foi possível salvar 'Investimento' no Notion: {e}")
+
 async def _process_buffered_messages(phone: str, is_audio: bool, initial_data: dict):
     """
     Função para processar as mensagens no buffer após o tempo de espera.
@@ -473,7 +495,7 @@ async def handle_webhook(request: Request):
             )
 
             return JSONResponse({"status": "message_buffered"})
-            
+        
         # Se nenhum webhook corresponder
         else:
             logger.info("Tipo de webhook não processado.")
