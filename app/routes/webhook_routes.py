@@ -222,8 +222,9 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
             
             if investimento_value:
                 notion_service = NotionService()
-                notion_service.update_lead_properties(phone, {"Investimento": investimento_value})
-                logger.info(f"💾 Investimento capturado e salvo no Notion para {phone}: {investimento_value}")
+                formatted_investimento = f'Lead quer investir: "{investimento_value}"'
+                notion_service.update_lead_properties(phone, {"Investimento": formatted_investimento})
+                logger.info(f"💾 Investimento capturado e salvo no Notion para {phone}: {formatted_investimento}")
         except Exception as e:
             logger.warning(f"Não foi possível salvar 'Investimento' no Notion: {e}")
 
@@ -430,6 +431,9 @@ async def handle_webhook(request: Request):
             if current_status.lower() in [s.lower() for s in protected_statuses]:
                 logger.info(f"Lead {phone} com status protegido '{current_status}'. Atualizando apenas dados.")
                 updates = {"Profissão": profissao, "Real Motivação": motivo, "Nível de Qualificação": qualification_level}
+                # Adiciona investimento se presente no webhook
+                if 'investimento' in data and data.get('investimento'):
+                    updates["Investimento"] = f'Lead quer investir: "{data.get("investimento")}"'
                 notion_service.update_lead_properties(phone, updates)
                 return JSONResponse({"status": "lead_status_protected"})
 
@@ -437,6 +441,10 @@ async def handle_webhook(request: Request):
                 "Profissão": profissao, "Real Motivação": motivo,
                 "Status": "Qualificado pela IA", "Nível de Qualificação": qualification_level
             }
+            
+            # Adiciona investimento se presente no webhook
+            if 'investimento' in data and data.get('investimento'):
+                updates["Investimento"] = f'Lead quer investir: "{data.get("investimento")}"'
             notion_service.update_lead_properties(phone, updates)
             
             lead_full_data = notion_service.get_lead_data_by_phone(phone)
