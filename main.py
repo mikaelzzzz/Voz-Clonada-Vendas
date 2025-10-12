@@ -159,6 +159,8 @@ VOICE_ID = os.getenv("VOICE_ID")
 MODEL_ID = os.getenv("MODEL_ID", "eleven_multilingual_v2")
 STABILITY = float(os.getenv("STABILITY", "0.5"))
 SIMILARITY = float(os.getenv("SIMILARITY", "0.8"))
+SAVE_AUDIO = os.getenv("SAVE_AUDIO", "false").lower() == "true"
+AUDIO_DIR = Path("tmp")
 
 # Zaia Configuration
 ZAIA_API_KEY = os.getenv("ZAIA_API_KEY")
