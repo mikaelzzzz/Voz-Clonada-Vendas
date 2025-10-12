@@ -73,14 +73,7 @@ cloudinary.config(
 # Register routers
 app.include_router(webhook_router, prefix="/webhook")
 
-# Variáveis globais
-AUDIO_DIR = Path("audio_files")
-AUDIO_DIR.mkdir(exist_ok=True)
-SAVE_AUDIO = os.getenv("SAVE_AUDIO", "false").lower() == "true"
-PUBLIC_URL = os.getenv("PUBLIC_URL")
-if not PUBLIC_URL:
-    raise ValueError("Missing PUBLIC_URL environment variable")
-
+# Forçando reconstrução da imagem no Cloud Run
 @app.get("/")
 async def healthcheck():
     return {"status": "ok"}
