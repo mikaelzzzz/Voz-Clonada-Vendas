@@ -22,5 +22,5 @@ COPY . .
 
 # Comando para iniciar a aplicação FastAPI usando gunicorn
 # Cloud Run injeta $PORT; o app está em main:app
-# Use shell form para garantir a expansão de $PORT no Cloud Run
-CMD ["gunicorn", "--workers", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:${PORT}", "main:app"]
+# Use shell form (sem colchetes) para garantir a expansão de $PORT no Cloud Run
+CMD gunicorn --workers 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT main:app

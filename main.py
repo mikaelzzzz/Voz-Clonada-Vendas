@@ -448,6 +448,6 @@ async def process_audio_message(audio_url):
         os.unlink(temp_audio_path)
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 3000))
+    port = int(os.getenv("PORT", 8080))
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=port) 
