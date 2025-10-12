@@ -1,4 +1,4 @@
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -9,14 +9,17 @@ RUN apt-get update && apt-get install -y \
 
 # Copia os arquivos do projeto
 COPY requirements.txt .
-COPY app.py .
-COPY .env .
 
 # Instala as dependências Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expõe a porta que o Flask vai usar
-EXPOSE 5000
+# Copia todo o código (inclui main.py e pasta app/)
+COPY . .
 
-# Comando para iniciar a aplicação
-CMD ["python", "-m", "flask", "run", "--host=0.0.0.0"] 
+# Cloud Run define a porta via variável $PORT
+# Não é necessário EXPOSE, mas não atrapalha; manteremos comentado
+# EXPOSE 8080
+
+# Comando para iniciar a aplicação FastAPI usando gunicorn
+# Cloud Run injeta $PORT; o app está em main:app
+CMD ["gunicorn", "--workers", "4", "--bind", "0.0.0.0:${PORT}", "main:app"]
