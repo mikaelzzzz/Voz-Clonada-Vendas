@@ -22,6 +22,9 @@ class CacheService:
 
     @classmethod
     async def _get_redis_client(cls) -> redis.Redis:
+        # Não tentar conectar se o Redis estiver desabilitado
+        if not settings.is_redis_enabled:
+            return None
         if cls._redis_client is None:
             try:
                 cls._redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
