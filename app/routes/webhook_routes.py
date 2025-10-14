@@ -16,13 +16,14 @@ from app.services.context_service import ContextService
 from langdetect import detect, LangDetectException
 from typing import Dict
 import random
+import os
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-BUFFER_SECONDS = 20  # Aumentado para 20 segundos
+BUFFER_SECONDS = int(os.getenv("BUFFER_SECONDS", "40"))
 _message_timers: Dict[str, asyncio.Task] = {}
 
 def _format_zaia_prompt_with_name(name: str, message: str) -> str:
