@@ -184,8 +184,13 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
     """
     Processa a resposta da Zaia, verificando links e enviando áudio/texto conforme necessário.
     """
-    if zaia_response.get('text'):
-        ai_response_text = zaia_response.get('text')
+    # Extrai texto da resposta da Zaia de forma robusta
+    ai_response_text = (
+        (zaia_response or {}).get('text')
+        or (zaia_response or {}).get('message')
+        or ((zaia_response or {}).get('data') or {}).get('text')
+    )
+    if ai_response_text:
         
         # Regex para detectar URLs na resposta da IA
         url_pattern = r'https?://[^\s]+'
@@ -219,6 +224,13 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
                 logger.info(f"💾 Investimento capturado e salvo no Notion para {phone}: {formatted_investimento}")
         except Exception as e:
             logger.warning(f"Não foi possível salvar 'Investimento' no Notion: {e}")
+    else:
+        # Sem texto retornado pela Zaia – registrar para diagnóstico
+        try:
+            keys = list((zaia_response or {}).keys())
+            logger.warning(f"Resposta da Zaia sem campo de texto. Chaves: {keys} | Body parcial: {str(zaia_response)[:300]}")
+        except Exception:
+            logger.warning("Resposta da Zaia sem campo de texto e sem possibilidade de log detalhado.")
 
 async def _process_buffered_messages(phone: str, is_audio: bool, initial_data: dict):
     """
