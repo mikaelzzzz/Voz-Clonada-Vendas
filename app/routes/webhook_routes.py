@@ -338,8 +338,11 @@ async def _delayed_message_processor(phone: str, is_audio: bool, initial_data: d
     client = await CacheService._get_redis_client()
     if not client:
         # Fallback para lógica sem Redis (ambiente de dev)
-        await asyncio.sleep(BUFFER_SECONDS)
-        await _process_buffered_messages(phone, is_audio, initial_data)
+        try:
+            await asyncio.sleep(BUFFER_SECONDS)
+            await _process_buffered_messages(phone, is_audio, initial_data)
+        except asyncio.CancelledError:
+            logger.info(f"Timer local cancelado para {phone} (nova mensagem chegou).")
         return
 
     await client.set(timer_key, job_id, ex=BUFFER_SECONDS + 5)
@@ -497,10 +500,23 @@ async def handle_webhook(request: Request):
                 logger.info(f"Mensagem de {phone} adicionada ao buffer. Aguardando próximas mensagens.")
 
             # Reinicia o timer a cada nova mensagem ou edição
-            loop = asyncio.get_event_loop()
-            task = loop.create_task(
-                _delayed_message_processor(phone, is_audio, data)
-            )
+            # Cancelamento local (fallback) caso não haja Redis
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            # Se já existe um timer local para este phone, cancela
+            existing_task = _message_timers.get(phone)
+            if existing_task and not existing_task.done():
+                try:
+                    existing_task.cancel()
+                except Exception:
+                    pass
+
+            task = loop.create_task(_delayed_message_processor(phone, is_audio, data))
+            _message_timers[phone] = task
 
             return JSONResponse({"status": "message_buffered"})
         

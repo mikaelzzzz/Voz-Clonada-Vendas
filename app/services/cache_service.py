@@ -214,7 +214,11 @@ class CacheService:
     
     @classmethod
     async def get_and_clear_buffer(cls, phone: str) -> str:
-        """Obtém todas as mensagens do buffer, as une com pontos e limpa o buffer."""
+        """Obtém todas as mensagens do buffer, as une e limpa o buffer.
+        - Mantém a ordem de chegada
+        - Usa quebra de linha entre entradas distintas para preservar intenção do usuário
+        - Garante pontuação quando necessário
+        """
         client = await cls._get_redis_client() if settings.is_redis_enabled else None
         
         texts = []
@@ -230,13 +234,15 @@ class CacheService:
         if not texts:
             return ""
 
-        # Processa os textos para formar uma única mensagem coesa, separando por pontos.
-        full_message = ""
+        # Estratégia: concatenar cada entrada em nova linha; se não houver pontuação ao fim
+        # de uma entrada, adiciona ponto final para evitar grudar frases.
+        normalized_parts = []
         for text in texts:
-            cleaned_text = text.strip()
-            if cleaned_text:
-                if full_message and not full_message.endswith(('.', '?', '!')):
-                    full_message += "."
-                full_message += " " + cleaned_text
-        
-        return full_message.strip()
+            cleaned_text = (text or "").strip()
+            if not cleaned_text:
+                continue
+            if cleaned_text and cleaned_text[-1] not in ".?!":
+                cleaned_text = cleaned_text + "."
+            normalized_parts.append(cleaned_text)
+
+        return "\n\n".join(normalized_parts).strip()
