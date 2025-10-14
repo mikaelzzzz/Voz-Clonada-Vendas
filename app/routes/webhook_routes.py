@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 from app.services.z_api_service import ZAPIService
 from app.services.zaia_service import ZaiaService
 from app.services.cache_service import CacheService
-from app.services.elevenlabs_service import ElevenLabsService
 from app.services.whisper_service import WhisperService
 from app.services.notion_service import NotionService
 from app.services.openai_service import OpenAIService
@@ -191,19 +190,11 @@ async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict)
         url_pattern = r'https?://[^\s]+'
         contains_link = re.search(url_pattern, ai_response_text)
 
-        # Se a mensagem original era áudio E a resposta NÃO contém link, envia áudio
-        if is_audio and not contains_link:
-            logger.info("Resposta para áudio sem link. Gerando áudio.")
-            elevenlabs_service = ElevenLabsService()
-            audio_bytes = elevenlabs_service.generate_audio(ai_response_text)
-            await ZAPIService.send_audio_with_typing(phone, audio_bytes, original_text=ai_response_text)
-        # Em todos os outros casos (resposta de texto, ou resposta com link), envia texto
-        else:
-            if contains_link:
-                logger.info("Resposta contém um link. Enviando como texto por padrão.")
-            
-            # A verificação de delay de contexto foi movida para o fluxo principal
-            await ZAPIService.send_text_with_typing(phone, ai_response_text)
+        # Sempre envia como texto via Z-API (remove fluxo ElevenLabs para evitar bloqueios de tier)
+        if contains_link:
+            logger.info("Resposta contém um link. Enviando como texto por padrão.")
+        logger.info(f"➡️ Enviando resposta de IA ao cliente {phone} via Z-API")
+        await ZAPIService.send_text_with_typing(phone, ai_response_text)
 
         # Após enviar a resposta, tentar capturar variável 'investimento' do retorno da Zaia
         try:
@@ -499,14 +490,7 @@ async def handle_webhook(request: Request):
                 await CacheService.add_message_to_buffer(phone, message_id, message_text)
                 logger.info(f"Mensagem de {phone} adicionada ao buffer. Aguardando próximas mensagens.")
 
-            # Reinicia o timer a cada nova mensagem ou edição
-            # Cancelamento local (fallback) caso não haja Redis
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
+            # Reinicia o timer a cada nova mensagem ou edição (fallback sem Redis)
             # Se já existe um timer local para este phone, cancela
             existing_task = _message_timers.get(phone)
             if existing_task and not existing_task.done():
@@ -515,7 +499,8 @@ async def handle_webhook(request: Request):
                 except Exception:
                     pass
 
-            task = loop.create_task(_delayed_message_processor(phone, is_audio, data))
+            # Agenda um novo timer na mesma event loop em execução
+            task = asyncio.create_task(_delayed_message_processor(phone, is_audio, data))
             _message_timers[phone] = task
 
             return JSONResponse({"status": "message_buffered"})
