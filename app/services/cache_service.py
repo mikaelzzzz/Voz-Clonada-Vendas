@@ -234,8 +234,8 @@ class CacheService:
         if not texts:
             return ""
 
-        # Estratégia: concatenar cada entrada em nova linha; se não houver pontuação ao fim
-        # de uma entrada, adiciona ponto final para evitar grudar frases.
+        # Estratégia: concatenar todas as entradas em uma única linha; se não houver
+        # pontuação ao fim de uma entrada, adiciona ponto final antes do espaço.
         normalized_parts = []
         for text in texts:
             cleaned_text = (text or "").strip()
@@ -245,4 +245,4 @@ class CacheService:
                 cleaned_text = cleaned_text + "."
             normalized_parts.append(cleaned_text)
 
-        return "\n\n".join(normalized_parts).strip()
+        return " ".join(normalized_parts).strip()
