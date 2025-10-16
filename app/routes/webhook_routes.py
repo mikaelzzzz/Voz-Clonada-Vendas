@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from app.services.z_api_service import ZAPIService
@@ -180,6 +180,21 @@ def detect_language(text: str) -> str:
     
     return 'pt'
 
+def _is_context_expired(ctx: dict) -> bool:
+    """
+    Verifica se o contexto salvo expirou com base em 'expires_at' (ISO8601 UTC).
+    Se não houver 'expires_at', considera não expirado.
+    """
+    try:
+        expires_at = ctx.get('expires_at')
+        if not expires_at:
+            return False
+        # Compatível com valores com 'Z' no final
+        expires_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+        return datetime.utcnow() > expires_dt.replace(tzinfo=None)
+    except Exception:
+        return False
+
 async def _handle_zaia_response(phone: str, is_audio: bool, zaia_response: dict):
     """
     Processa a resposta da Zaia, verificando links e enviando áudio/texto conforme necessário.
@@ -254,6 +269,24 @@ async def _process_buffered_messages(phone: str, is_audio: bool, initial_data: d
     lead_data = notion_service.get_lead_data_by_phone(phone)
 
     try:
+        # 0) Checagem de contexto: se está aguardando pós-saudação, encaminha a próxima mensagem direto para a Zaia
+        ctx = await CacheService.get_context_data(phone) or {}
+        if ctx.get('awaiting_post_greeting') and not _is_context_expired(ctx):
+            first_name_ctx = ctx.get('name') or extract_first_name(sender_name)
+            lang_ctx = detect_language(message_text)
+            saudacao_value_ctx = 'saudação'
+            metadata_ctx = {"data": {"saudacao": saudacao_value_ctx}, "name": first_name_ctx}
+            if lang_ctx == 'en':
+                prefixed_ctx = f"Hi, my name is {first_name_ctx}. {message_text}"
+            else:
+                prefixed_ctx = f"Oi, me chamo {first_name_ctx}. {message_text}"
+            # Limpa o flag antes de enviar
+            ctx['awaiting_post_greeting'] = False
+            await CacheService.set_context_data(phone, ctx)
+            zaia_response_ctx = await ZaiaService.send_message({"text": prefixed_ctx, "phone": phone}, metadata=metadata_ctx)
+            await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response_ctx)
+            return
+
         if lead_data and lead_data.get('properties', {}).get('Aguardando Confirmação Nome', False):
             lead_props = lead_data.get('properties', {})
             cliente_exibicao = lead_props.get('Cliente') or sender_name
@@ -301,31 +334,107 @@ async def _process_buffered_messages(phone: str, is_audio: bool, initial_data: d
                     first_name = extract_first_name(sender_name)
                     normalized_message = (message_text or '').lower().strip()
                     greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa', 'hi', 'hello']
-                    if normalized_message in greetings:
+                    aulas_keywords = ['aula', 'aulas', 'metodologia']
+                    valores_keywords = ['valor', 'valores', 'preço', 'preco', 'plano', 'planos']
+                    has_greeting = any(g in normalized_message for g in greetings)
+                    has_tudo_bem = 'tudo bem' in normalized_message
+                    has_aulas = any(k in normalized_message for k in aulas_keywords)
+                    has_valores = any(k in normalized_message for k in valores_keywords)
+
+                    # 1) Saudação simples: responde localmente e aguarda próxima
+                    if (has_greeting or has_tudo_bem) and not (has_aulas or has_valores):
                         lang = detect_language(message_text)
-                        greeting_message = f"Hello Hello, {first_name}! Que bom ter você por aqui. Como posso te ajudar com o seu objetivo em Inglês hoje?"
                         if lang == 'en':
-                            greeting_message = f"Hello Hello, {first_name}! How can I help you with your English goals today?"
+                            greeting_message = "Hello Hello, how are you?"
+                        else:
+                            greeting_message = "Hello Hello, tudo bem e com você?"
                         await ZAPIService.send_text_with_typing(phone, greeting_message)
+
+                        # Seta flag no contexto por ~10 minutos
+                        expires_at = (datetime.utcnow() + timedelta(minutes=10)).isoformat() + 'Z'
+                        await CacheService.set_context_data(phone, {
+                            'awaiting_post_greeting': True,
+                            'last_saudacao': 'saudação',
+                            'name': first_name,
+                            'expires_at': expires_at
+                        })
                     else:
-                        # Pergunta direta: injetar o nome no prompt para a Zaia
-                        zaia_prompt = _format_zaia_prompt_with_name(first_name, message_text)
-                        zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": first_name})
+                        # 2) Mensagem com intenção: encaminha para Zaia com metadata e prefixo
+                        if has_aulas:
+                            saudacao_value = 'Cliente quer saber mais sobre aulas'
+                        elif has_valores:
+                            saudacao_value = 'Cliente quer saber mais sobre valores'
+                        elif has_greeting or has_tudo_bem:
+                            saudacao_value = 'saudação'
+                        else:
+                            saudacao_value = None
+
+                        metadata = {"name": first_name}
+                        if saudacao_value:
+                            metadata["data"] = {"saudacao": saudacao_value}
+
+                        lang = detect_language(message_text)
+                        if lang == 'en':
+                            prefixed_text = f"Hi, my name is {first_name}. {message_text}"
+                        else:
+                            prefixed_text = f"Oi, me chamo {first_name}. {message_text}"
+
+                        zaia_response = await ZaiaService.send_message({"text": prefixed_text, "phone": phone}, metadata=metadata)
                         await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
-                else:
-                    # Lead existente: NÃO injetar mais o nome no prompt.
+            else:
+                # Lead existente: NÃO injetar mais o nome no prompt.
                 normalized_message = message_text.lower().strip()
-                greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
-                if normalized_message in greetings:
+                greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa', 'hi', 'hello']
+                aulas_keywords = ['aula', 'aulas', 'metodologia']
+                valores_keywords = ['valor', 'valores', 'preço', 'preco', 'plano', 'planos']
+                has_greeting = any(g in normalized_message for g in greetings)
+                has_tudo_bem = 'tudo bem' in normalized_message
+                has_aulas = any(k in normalized_message for k in aulas_keywords)
+                has_valores = any(k in normalized_message for k in valores_keywords)
+
+                if (has_greeting or has_tudo_bem) and not (has_aulas or has_valores):
                     first_name = extract_first_name(sender_name)
-                    response_message = f"Hello Hello, {first_name}! Como posso te ajudar hoje?"
+                    lang = detect_language(message_text)
+                    if lang == 'en':
+                        response_message = "Hello Hello, how are you?"
+                    else:
+                        response_message = "Hello Hello, tudo bem e com você?"
                     await ZAPIService.send_text_with_typing(phone, response_message)
+
+                    # Seta flag no contexto para próxima mensagem ir para Zaia
+                    expires_at = (datetime.utcnow() + timedelta(minutes=10)).isoformat() + 'Z'
+                    await CacheService.set_context_data(phone, {
+                        'awaiting_post_greeting': True,
+                        'last_saudacao': 'saudação',
+                        'name': first_name,
+                        'expires_at': expires_at
+                    })
                 else:
-                        # Pergunta real: envia somente o conteúdo do usuário (sem injetar nome).
-                        zaia_prompt = message_text
-                        lead_props = lead_data.get('properties', {}) if lead_data else {}
-                        cliente_nome = lead_props.get('Cliente') or extract_first_name(sender_name)
-                        zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": cliente_nome})
+                    # Encaminhar para Zaia com classificação e nome do cliente
+                    lead_props = lead_data.get('properties', {}) if lead_data else {}
+                    cliente_nome = lead_props.get('Cliente') or extract_first_name(sender_name)
+
+                    if has_aulas:
+                        saudacao_value = 'Cliente quer saber mais sobre aulas'
+                    elif has_valores:
+                        saudacao_value = 'Cliente quer saber mais sobre valores'
+                    elif has_greeting or has_tudo_bem:
+                        saudacao_value = 'saudação'
+                    else:
+                        saudacao_value = None
+
+                    metadata = {"name": cliente_nome}
+                    if saudacao_value:
+                        metadata["data"] = {"saudacao": saudacao_value}
+
+                    # Para leads existentes, enviar o conteúdo do usuário (sem injetar nome no meio), mas com prefixo leve
+                    lang = detect_language(message_text)
+                    if lang == 'en':
+                        prefixed_text = f"Hi, my name is {cliente_nome}. {message_text}"
+                    else:
+                        prefixed_text = f"Oi, me chamo {cliente_nome}. {message_text}"
+
+                    zaia_response = await ZaiaService.send_message({"text": prefixed_text, "phone": phone}, metadata=metadata)
                     await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
 
     except Exception as e:
