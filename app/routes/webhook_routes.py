@@ -312,8 +312,8 @@ async def _process_buffered_messages(phone: str, is_audio: bool, initial_data: d
                         zaia_prompt = _format_zaia_prompt_with_name(first_name, message_text)
                         zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": first_name})
                         await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
-            else:
-                # Lead existente
+                else:
+                    # Lead existente: NÃO injetar mais o nome no prompt.
                 normalized_message = message_text.lower().strip()
                 greetings = ['oi', 'olá', 'ola', 'oii', 'bom dia', 'boa tarde', 'boa noite', 'opa']
                 if normalized_message in greetings:
@@ -321,11 +321,11 @@ async def _process_buffered_messages(phone: str, is_audio: bool, initial_data: d
                     response_message = f"Hello Hello, {first_name}! Como posso te ajudar hoje?"
                     await ZAPIService.send_text_with_typing(phone, response_message)
                 else:
-                    lead_props = lead_data.get('properties', {}) if lead_data else {}
-                    cliente_nome = lead_props.get('Cliente') or extract_first_name(sender_name)
-                    # Pergunta real: injetar o nome no prompt para a Zaia
-                    zaia_prompt = _format_zaia_prompt_with_name(cliente_nome, message_text)
-                    zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": cliente_nome})
+                        # Pergunta real: envia somente o conteúdo do usuário (sem injetar nome).
+                        zaia_prompt = message_text
+                        lead_props = lead_data.get('properties', {}) if lead_data else {}
+                        cliente_nome = lead_props.get('Cliente') or extract_first_name(sender_name)
+                        zaia_response = await ZaiaService.send_message({"text": zaia_prompt, "phone": phone}, metadata={"name": cliente_nome})
                     await _handle_zaia_response(phone, is_audio=is_audio, zaia_response=zaia_response)
 
     except Exception as e:
